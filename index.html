@@ -15,7 +15,7 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        const SHEET_ID = '1fGvXRbfYBNpul-jC3YFN2mFx39KLEusZMZCkTOeJH7s';
+        const API_URL = 'https://script.google.com/macros/s/AKfycbxatBdX514dNu0GJfuIeETh286iijyseNkTYkmKm1jAdTFYBJ8vmu_cjEauVFDAN-_cfw/exec';
 
         // Ikony SVG
         const Calendar = ({ size = 24, className = "" }) => (
@@ -42,6 +42,13 @@
             </svg>
         );
 
+        const X = ({ size = 24 }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        );
+
         const RefreshCw = ({ size = 24, className = "" }) => (
             <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
                 <polyline points="23 4 23 10 17 10"></polyline>
@@ -58,6 +65,15 @@
             </svg>
         );
 
+        const UserPlus = ({ size = 24 }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="8.5" cy="7" r="4"></circle>
+                <line x1="20" y1="8" x2="20" y2="14"></line>
+                <line x1="23" y1="11" x2="17" y2="11"></line>
+            </svg>
+        );
+
         const VolleyballApp = () => {
             const [trainings, setTrainings] = useState([]);
             const [subscriptions, setSubscriptions] = useState([]);
@@ -65,38 +81,38 @@
             const [loading, setLoading] = useState(true);
             const [error, setError] = useState(null);
             const [activeTab, setActiveTab] = useState('bookings');
+            const [showBookingForm, setShowBookingForm] = useState(null);
+            const [bookingName, setBookingName] = useState('');
+            const [submitting, setSubmitting] = useState(false);
 
-            // Funkcje do odczytu danych z Google Sheets
-            const fetchSheetData = async (sheetName) => {
-                try {
-                    const response = await fetch(
-                        `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${sheetName}`
-                    );
-                    const text = await response.text();
-                    const json = JSON.parse(text.substring(47).slice(0, -2));
-                    return json.table.rows.map(row => 
-                        row.c ? row.c.map(cell => cell ? cell.v : '') : []
-                    );
-                } catch (err) {
-                    console.error(`Błąd odczytu ${sheetName}:`, err);
-                    return [];
-                }
+            const callAPI = async (action, data = {}) => {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action, ...data }),
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                });
+                return await response.json();
             };
 
             const loadData = async () => {
                 setLoading(true);
                 setError(null);
                 try {
-                    const [trainingsData, subscriptionsData, bookingsData] = await Promise.all([
-                        fetchSheetData('Treningi'),
-                        fetchSheetData('Abonamenty'),
-                        fetchSheetData('Zapisy')
+                    const [trainingsRes, subscriptionsRes, bookingsRes] = await Promise.all([
+                        callAPI('getTrainings'),
+                        callAPI('getSubscriptions'),
+                        callAPI('getBookings')
                     ]);
 
-                    // Pomiń pierwszy wiersz (nagłówki) i puste wiersze
-                    setTrainings(trainingsData.slice(1).filter(row => row[0]));
-                    setSubscriptions(subscriptionsData.slice(1).filter(row => row[0]));
-                    setBookings(bookingsData.slice(1).filter(row => row[0]));
+                    if (trainingsRes.error || subscriptionsRes.error || bookingsRes.error) {
+                        throw new Error('Błąd ładowania danych');
+                    }
+
+                    setTrainings(trainingsRes.trainings || []);
+                    setSubscriptions(subscriptionsRes.subscriptions || []);
+                    setBookings(bookingsRes.bookings || []);
                 } catch (err) {
                     setError('Nie udało się załadować danych. Sprawdź połączenie.');
                     console.error(err);
@@ -107,80 +123,83 @@
 
             useEffect(() => {
                 loadData();
-                // Odświeżaj dane co 30 sekund
                 const interval = setInterval(loadData, 30000);
                 return () => clearInterval(interval);
             }, []);
 
-            // Funkcja sprawdzająca czy osoba ma abonament
             const hasSubscription = (name) => {
-                return subscriptions.some(sub => sub[0] === name);
+                return subscriptions.some(sub => sub.name === name);
             };
 
-            // Funkcja formatująca datę
-            const formatDate = (dateValue) => {
-                if (!dateValue) return '';
-                // Google Sheets zwraca daty jako "Date(2024,11,5,0,0,0)"
-                if (typeof dateValue === 'string' && dateValue.startsWith('Date(')) {
-                    const match = dateValue.match(/Date\((\d+),(\d+),(\d+)/);
-                    if (match) {
-                        const year = match[1];
-                        const month = String(parseInt(match[2]) + 1).padStart(2, '0');
-                        const day = String(match[3]).padStart(2, '0');
-                        return `${year}-${month}-${day}`;
+            const handleAddBooking = async (termin) => {
+                if (!bookingName.trim()) {
+                    alert('Wpisz swoje imię i nazwisko');
+                    return;
+                }
+
+                setSubmitting(true);
+                try {
+                    const result = await callAPI('addBooking', { termin, name: bookingName.trim() });
+                    
+                    if (result.error) {
+                        alert(result.error);
+                    } else {
+                        setBookingName('');
+                        setShowBookingForm(null);
+                        await loadData();
                     }
+                } catch (err) {
+                    alert('Błąd zapisu. Spróbuj ponownie.');
+                    console.error(err);
+                } finally {
+                    setSubmitting(false);
                 }
-                return dateValue;
             };
 
-            // Funkcja formatująca godzinę
-            const formatTime = (timeValue) => {
-                if (!timeValue) return '';
-                // Google Sheets zwraca czas jako liczbę dziesiętną (np. 0.75 = 18:00)
-                if (typeof timeValue === 'number') {
-                    const hours = Math.floor(timeValue * 24);
-                    const minutes = Math.floor((timeValue * 24 - hours) * 60);
-                    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+            const handleDeleteBooking = async (termin, name) => {
+                if (!confirm('Czy na pewno chcesz wypisać się z treningu?')) return;
+
+                setSubmitting(true);
+                try {
+                    const result = await callAPI('deleteBooking', { termin, name });
+                    
+                    if (result.error) {
+                        alert(result.error);
+                    } else {
+                        await loadData();
+                    }
+                } catch (err) {
+                    alert('Błąd wypisywania. Spróbuj ponownie.');
+                    console.error(err);
+                } finally {
+                    setSubmitting(false);
                 }
-                return timeValue;
             };
 
-            // Grupowanie zapisów według treningów
             const getBookingsByTraining = () => {
                 const grouped = {};
                 
                 trainings.forEach(training => {
-                    const date = formatDate(training[0]);
-                    const time = formatTime(training[1]);
-                    const limit = parseInt(training[2]) || 12;
-                    const key = `${date} ${time}`;
-                    
+                    const key = `${training.date} ${training.time}`;
                     grouped[key] = {
-                        date,
-                        time,
-                        limit,
+                        ...training,
                         participants: []
                     };
                 });
 
                 bookings.forEach(booking => {
-                    const termin = booking[0];
-                    const name = booking[1];
-                    
-                    if (grouped[termin]) {
-                        grouped[termin].participants.push({
-                            name,
-                            hasSubscription: hasSubscription(name),
-                            timestamp: booking[2] || Date.now()
+                    if (grouped[booking.termin]) {
+                        grouped[booking.termin].participants.push({
+                            ...booking,
+                            hasSubscription: hasSubscription(booking.name)
                         });
                     }
                 });
 
-                // Sortuj uczestników: najpierw z abonamentem, potem chronologicznie
                 Object.keys(grouped).forEach(key => {
                     grouped[key].participants.sort((a, b) => {
                         if (a.hasSubscription === b.hasSubscription) {
-                            return a.timestamp - b.timestamp;
+                            return new Date(a.timestamp) - new Date(b.timestamp);
                         }
                         return b.hasSubscription ? 1 : -1;
                     });
@@ -219,6 +238,7 @@
                                 <button
                                     onClick={loadData}
                                     className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition flex items-center gap-2"
+                                    disabled={submitting}
                                 >
                                     <RefreshCw size={20} />
                                     Odśwież
@@ -264,21 +284,6 @@
                                     Abonamenty ({subscriptions.length})
                                 </button>
                             </div>
-
-                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                                <p className="text-blue-800 text-sm">
-                                    <strong>Aby edytować dane:</strong> Otwórz arkusz Google Sheets i dodaj/edytuj wiersze bezpośrednio tam. 
-                                    Kliknij "Odśwież" aby zobaczyć najnowsze zmiany.
-                                </p>
-                                <a 
-                                    href={`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-blue-600 hover:text-blue-700 underline text-sm mt-2 inline-block"
-                                >
-                                    Otwórz Google Sheets →
-                                </a>
-                            </div>
                         </div>
 
                         {activeTab === 'bookings' && (
@@ -287,7 +292,6 @@
                                     <div className="bg-white rounded-xl shadow-lg p-12 text-center">
                                         <Calendar size={48} className="mx-auto mb-4 text-gray-400" />
                                         <p className="text-gray-500 text-lg">Brak zaplanowanych treningów</p>
-                                        <p className="text-gray-400 mt-2">Dodaj treningi w arkuszu Google Sheets</p>
                                     </div>
                                 ) : (
                                     Object.entries(groupedBookings).map(([key, training]) => {
@@ -325,7 +329,7 @@
                                                     {training.participants.length === 0 ? (
                                                         <p className="text-gray-400 text-center py-4">Brak zapisanych uczestników</p>
                                                     ) : (
-                                                        <div className="space-y-2">
+                                                        <div className="space-y-2 mb-4">
                                                             {training.participants.map((participant, index) => {
                                                                 const status = index < training.limit ? 'accepted' : 'waiting';
                                                                 return (
@@ -355,10 +359,62 @@
                                                                                 </span>
                                                                             )}
                                                                         </div>
+                                                                        <button
+                                                                            onClick={() => handleDeleteBooking(key, participant.name)}
+                                                                            className="text-red-500 hover:text-red-700 transition"
+                                                                            disabled={submitting}
+                                                                        >
+                                                                            <X size={20} />
+                                                                        </button>
                                                                     </div>
                                                                 );
                                                             })}
                                                         </div>
+                                                    )}
+
+                                                    {showBookingForm === key ? (
+                                                        <div className="bg-blue-50 p-4 rounded-lg">
+                                                            <h4 className="font-semibold mb-3 text-gray-800">Zapisz się na trening</h4>
+                                                            <div className="space-y-3">
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="Imię i nazwisko"
+                                                                    value={bookingName}
+                                                                    onChange={(e) => setBookingName(e.target.value)}
+                                                                    className="w-full px-3 py-2 border rounded-lg"
+                                                                    onKeyPress={(e) => e.key === 'Enter' && handleAddBooking(key)}
+                                                                    disabled={submitting}
+                                                                />
+                                                                <div className="flex gap-2">
+                                                                    <button
+                                                                        onClick={() => handleAddBooking(key)}
+                                                                        className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition disabled:bg-gray-400"
+                                                                        disabled={submitting}
+                                                                    >
+                                                                        {submitting ? 'Zapisywanie...' : 'Zapisz się'}
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            setShowBookingForm(null);
+                                                                            setBookingName('');
+                                                                        }}
+                                                                        className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 transition"
+                                                                        disabled={submitting}
+                                                                    >
+                                                                        Anuluj
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => setShowBookingForm(key)}
+                                                            className="w-full bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 transition flex items-center justify-center gap-2 disabled:bg-gray-400"
+                                                            disabled={submitting}
+                                                        >
+                                                            <UserPlus size={20} />
+                                                            Zapisz się na trening
+                                                        </button>
                                                     )}
                                                 </div>
                                             </div>
@@ -378,10 +434,10 @@
                                         {trainings.map((training, index) => (
                                             <div key={index} className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg flex-wrap">
                                                 <span className="font-semibold text-gray-600">{index + 1}.</span>
-                                                <span className="font-medium">{formatDate(training[0])}</span>
-                                                <span className="text-gray-600">{formatTime(training[1])}</span>
+                                                <span className="font-medium">{training.date}</span>
+                                                <span className="text-gray-600">{training.time}</span>
                                                 <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm">
-                                                    Limit: {training[2]}
+                                                    Limit: {training.limit}
                                                 </span>
                                             </div>
                                         ))}
@@ -400,9 +456,9 @@
                                         {subscriptions.map((sub, index) => (
                                             <div key={index} className="flex items-center gap-4 p-3 bg-orange-50 rounded-lg flex-wrap">
                                                 <span className="font-semibold text-gray-600">{index + 1}.</span>
-                                                <span className="font-medium flex-1">{sub[0]}</span>
+                                                <span className="font-medium flex-1">{sub.name}</span>
                                                 <span className="text-gray-600 text-sm">
-                                                    {formatDate(sub[1])} - {formatDate(sub[2])}
+                                                    {sub.dateFrom} - {sub.dateTo}
                                                 </span>
                                             </div>
                                         ))}
