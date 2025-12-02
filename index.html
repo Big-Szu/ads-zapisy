@@ -15,19 +15,20 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        const API_URL = 'https://script.google.com/macros/s/AKfycbyCCUq7a6y6UxYlvACbtWBbwNnjLh7UgrDvRU9IPfKhA7A6RM3DqDZrGEGzs6aQaM868w/exec';
+        const API_URL = 'https://script.google.com/macros/s/AKfycbycH9WgMklR1iqqwM8Utx1lWS7Ne-Dcy4N-6C3QBcoQdxn3bIGjjLN7cQ0wI42CZIdCOw/exec';
 
-        const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+        const capitalize = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 
         const formatTrainingDateTime = (dateStr, timeStr) => {
-            if (!dateStr || !timeStr) return `${dateStr || ''} ${timeStr || ''}`;
+            if (!dateStr || !timeStr) return `${dateStr || ''} ${timeStr || ''}`.trim();
         
-            // Zakładam, że dateStr jest w formacie "YYYY-MM-DD"
-            // a timeStr w formacie "HH:MM"
             const [year, month, day] = dateStr.split('-').map(Number);
             const [hour, minute] = timeStr.split(':').map(Number);
         
             const d = new Date(year, month - 1, day, hour, minute);
+            if (isNaN(d.getTime())) {
+                return `${dateStr} ${timeStr}`;
+            }
         
             let dayName = d.toLocaleDateString('pl-PL', { weekday: 'long' });
             dayName = capitalize(dayName);
@@ -39,7 +40,6 @@
             const hh = String(hour).padStart(2, '0');
             const min = String(minute).padStart(2, '0');
         
-            // Przykład: "Czwartek, 05.12.2024 19:00"
             return `${dayName}, ${dd}.${mm}.${yyyy} ${hh}:${min}`;
         };
         
