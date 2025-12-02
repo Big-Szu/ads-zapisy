@@ -42,6 +42,28 @@
         
             return `${dayName}, ${dd}.${mm}.${yyyy} ${hh}:${min}`;
         };
+
+            const bookingTerminToKey = (terminIso) => {
+                // gdyby termin był już w docelowym formacie, zwróć jak jest
+                if (!terminIso) return '';
+                // jeśli wygląda jak nasz "YYYY-MM-DD HH:MM" – nic nie rób
+                if (terminIso.includes(' ')) return terminIso;
+            
+                const d = new Date(terminIso);
+                if (isNaN(d.getTime())) {
+                    // nie wiadomo co to – zwróć oryginał
+                    return terminIso;
+                }
+            
+                const year = d.getFullYear();
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                const hours = String(d.getHours()).padStart(2, '0');
+                const minutes = String(d.getMinutes()).padStart(2, '0');
+            
+                // dokładnie taki sam format jak key z trainings
+                return `${year}-${month}-${day} ${hours}:${minutes}`;
+            };
         
         // Ikony SVG
         const Calendar = ({ size = 24, className = "" }) => (
@@ -210,14 +232,15 @@
                     };
                 });
 
-                bookings.forEach(booking => {
-                    if (grouped[booking.termin]) {
-                        grouped[booking.termin].participants.push({
-                            ...booking,
-                            hasSubscription: hasSubscription(booking.name)
-                        });
-                    }
-                });
+            bookings.forEach(booking => {
+                const key = bookingTerminToKey(booking.termin);
+                if (grouped[key]) {
+                    grouped[key].participants.push({
+                        ...booking,
+                        hasSubscription: hasSubscription(booking.name)
+                    });
+                }
+            });
 
                 Object.keys(grouped).forEach(key => {
                     grouped[key].participants.sort((a, b) => {
