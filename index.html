@@ -192,8 +192,29 @@
         }, []);
 
         const hasSubscription = (name) => {
-            return subscriptions.some(sub => sub.name === name);
+            if (!name) return false;
+        
+            const today = new Date();
+            const todayY = today.getFullYear();
+            const todayM = today.getMonth();
+            const todayD = today.getDate();
+        
+            // Uproszczenie: uznajemy, że dateFrom/dateTo są w formacie "YYYY-MM-DD"
+            return subscriptions.some(sub => {
+                if (sub.name !== name) return false;
+                if (!sub.dateFrom || !sub.dateTo) return false;
+        
+                const [fromY, fromM, fromD] = sub.dateFrom.split('-').map(Number);
+                const [toY, toM, toD] = sub.dateTo.split('-').map(Number);
+        
+                const fromDate = new Date(fromY, fromM - 1, fromD);
+                const toDate = new Date(toY, toM - 1, toD, 23, 59, 59, 999); // do końca dnia
+        
+                // Porównujemy bezpośrednio daty
+                return today >= fromDate && today <= toDate;
+            });
         };
+
 
         const updateNameSuggestions = (value) => {
             const query = value.trim().toLowerCase();
