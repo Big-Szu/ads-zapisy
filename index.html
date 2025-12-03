@@ -46,6 +46,24 @@
         return `${dayName}, ${dd}.${mm}.${yyyy} ${hh}:${min}`;
     };
 
+    // Zwraca obiekt Date początku treningu (lokalny czas)
+    const getTrainingStartDate = (dateStr, timeStr) => {
+        if (!dateStr || !timeStr) return null;
+        const [year, month, day] = dateStr.split('-').map(Number);
+        const [hour, minute] = timeStr.split(':').map(Number);
+        const d = new Date(year, month - 1, day, hour, minute);
+        return isNaN(d.getTime()) ? null : d;
+    };
+       
+    // Zwraca Date granicy priorytetu (dzień treningu, godz. 16:00)
+    const getPriorityCutoffDate = (dateStr) => {
+        if (!dateStr) return null;
+        const [year, month, day] = dateStr.split('-').map(Number);
+        const d = new Date(year, month - 1, day, 16, 0); // 16:00 lokalnie
+        return isNaN(d.getTime()) ? null : d;
+    };
+
+    
     // Przekształcenie ISO `termin` z bookings na klucz jak w trainings: "YYYY-MM-DD HH:MM"
     const bookingTerminToKey = (terminIso) => {
         if (!terminIso) return '';
@@ -314,13 +332,50 @@
             });
 
             Object.keys(grouped).forEach(key => {
+                const training = grouped[key];
+                const trainingStart = getTrainingStartDate(training.date, training.time);
+                const priorityCutoff = getPriorityCutoffDate(training.date);
+            
                 grouped[key].participants.sort((a, b) => {
-                    if (a.hasSubscription === b.hasSubscription) {
-                        return new Date(a.timestamp) - new Date(b.timestamp);
+                    const aTime = new Date(a.timestamp);
+                    const bTime = new Date(b.timestamp);
+            
+                    // Jeżeli nie udało się sparsować dat (awaryjnie) – sortuj po timestamp rosnąco
+                    if (isNaN(aTime) || isNaN(bTime) || !priorityCutoff) {
+                        return aTime - bTime;
                     }
-                    return b.hasSubscription ? 1 : -1;
+            
+                    const aBeforeCutoff = aTime < priorityCutoff;
+                    const bBeforeCutoff = bTime < priorityCutoff;
+            
+                    // Przypadek 1: oba zapisy PRZED 16:00 – abonament ma priorytet
+                    if (aBeforeCutoff && bBeforeCutoff) {
+                        if (a.hasSubscription !== b.hasSubscription) {
+                            // true powinien być "mniejszy" (wyżej na liście)
+                            return a.hasSubscription ? -1 : 1;
+                        }
+                        // jeśli obaj abonamentowcy albo obaj bez abo – decyduje timestamp
+                        return aTime - bTime;
+                    }
+            
+                    // Przypadek 2: oba zapisy PO 16:00 – wszyscy równi, liczy się timestamp
+                    if (!aBeforeCutoff && !bBeforeCutoff) {
+                        return aTime - bTime;
+                    }
+            
+                    // Przypadek 3: jeden przed 16:00, drugi po 16:00
+                    // Tu już zależy, co chcesz:
+                    // - czy "stary" (przed 16:00) ma zawsze zostać przed "nowym",
+                    // - czy traktujemy je jednakowo.
+                    //
+                    // Z Twojego opisu:
+                    //   "Po 16:00 ... każdy może się zapisać na zasadzie kto pierwszy ten lepszy"
+                    //   sugeruje, że nie kasujemy wcześniejszych zapisów, tylko zmieniamy
+                    //   zasady dla NOWYCH. Więc naturalnie wcześniejszy (przed 16) zostaje wyżej.
+                    return aTime - bTime;
                 });
             });
+
 
             return grouped;
         };
