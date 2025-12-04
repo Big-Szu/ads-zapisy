@@ -54,7 +54,16 @@
         const d = new Date(year, month - 1, day, hour, minute);
         return isNaN(d.getTime()) ? null : d;
     };
-       
+
+    // 0 = niedziela, 1 = poniedziałek, 2 = wtorek, 3 = środa, 4 = czwartek, ...
+    const getWeekdayFromDate = (dateStr) => {
+        if (!dateStr) return null;
+        const [year, month, day] = dateStr.split('-').map(Number);
+        const d = new Date(year, month - 1, day);
+        if (isNaN(d.getTime())) return null;
+        return d.getDay();
+    };
+    
     // Zwraca Date granicy priorytetu (dzień treningu, godz. 16:00)
     const getPriorityCutoffDate = (dateStr) => {
         if (!dateStr) return null;
@@ -335,46 +344,50 @@
                 const training = grouped[key];
                 const trainingStart = getTrainingStartDate(training.date, training.time);
                 const priorityCutoff = getPriorityCutoffDate(training.date);
+                const weekday = getWeekdayFromDate(training.date); // 0..6
             
                 grouped[key].participants.sort((a, b) => {
                     const aTime = new Date(a.timestamp);
                     const bTime = new Date(b.timestamp);
             
-                    // Jeżeli nie udało się sparsować dat (awaryjnie) – sortuj po timestamp rosnąco
-                    if (isNaN(aTime) || isNaN(bTime) || !priorityCutoff) {
+                    if (isNaN(aTime) || isNaN(bTime)) {
                         return aTime - bTime;
                     }
             
-                    const aBeforeCutoff = aTime < priorityCutoff;
-                    const bBeforeCutoff = bTime < priorityCutoff;
+                    // WTORKI (2) – zawsze "kto pierwszy, ten lepszy", brak przewagi abonamentu
+                    if (weekday === 2) {
+                        return aTime - bTime;
+                    }
             
-                    // Przypadek 1: oba zapisy PRZED 16:00 – abonament ma priorytet
-                    if (aBeforeCutoff && bBeforeCutoff) {
-                        if (a.hasSubscription !== b.hasSubscription) {
-                            // true powinien być "mniejszy" (wyżej na liście)
-                            return a.hasSubscription ? -1 : 1;
+                    // CZWARTKI (4) – reguła: do 16:00 abonament ma priorytet,
+                    // po 16:00 wszyscy równi (dla zapisów po 16:00)
+                    if (weekday === 4 && priorityCutoff) {
+                        const aBeforeCutoff = aTime < priorityCutoff;
+                        const bBeforeCutoff = bTime < priorityCutoff;
+            
+                        // Oba zapisy przed 16:00 – abonament ma priorytet
+                        if (aBeforeCutoff && bBeforeCutoff) {
+                            if (a.hasSubscription !== b.hasSubscription) {
+                                return a.hasSubscription ? -1 : 1;
+                            }
+                            return aTime - bTime;
                         }
-                        // jeśli obaj abonamentowcy albo obaj bez abo – decyduje timestamp
+            
+                        // Oba zapisy po 16:00 – liczy się tylko kolejność
+                        if (!aBeforeCutoff && !bBeforeCutoff) {
+                            return aTime - bTime;
+                        }
+            
+                        // Jeden przed 16:00, drugi po 16:00 –
+                        // zachowujemy porządek czasowy (wcześniejszy wyżej)
                         return aTime - bTime;
                     }
             
-                    // Przypadek 2: oba zapisy PO 16:00 – wszyscy równi, liczy się timestamp
-                    if (!aBeforeCutoff && !bBeforeCutoff) {
-                        return aTime - bTime;
-                    }
-            
-                    // Przypadek 3: jeden przed 16:00, drugi po 16:00
-                    // Tu już zależy, co chcesz:
-                    // - czy "stary" (przed 16:00) ma zawsze zostać przed "nowym",
-                    // - czy traktujemy je jednakowo.
-                    //
-                    // Z Twojego opisu:
-                    //   "Po 16:00 ... każdy może się zapisać na zasadzie kto pierwszy ten lepszy"
-                    //   sugeruje, że nie kasujemy wcześniejszych zapisów, tylko zmieniamy
-                    //   zasady dla NOWYCH. Więc naturalnie wcześniejszy (przed 16) zostaje wyżej.
+                    // Inne dni – na razie też "kto pierwszy, ten lepszy"
                     return aTime - bTime;
                 });
             });
+
 
 
             return grouped;
