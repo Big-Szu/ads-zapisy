@@ -18,7 +18,8 @@
     // PODMIEŃ na aktualny URL WebAppa, jeśli inny:
     const API_URL = 'https://script.google.com/macros/s/AKfycbzhxVvhsz-F5H1z6aiakoLeF1SMP-HzAZjJnEnPPPu44zooQqO4r_sb9LsBa1WtlGDySw/exec';
 
-    // Funkcje pomocnicze formatujące daty/czasy
+    // --- Funkcje pomocnicze dat/czasu ---
+
     const capitalize = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 
     // Wyświetlanie: „Czwartek, 05.12.2025 19:30”
@@ -46,15 +47,6 @@
         return `${dayName}, ${dd}.${mm}.${yyyy} ${hh}:${min}`;
     };
 
-    // Zwraca obiekt Date początku treningu (lokalny czas)
-    const getTrainingStartDate = (dateStr, timeStr) => {
-        if (!dateStr || !timeStr) return null;
-        const [year, month, day] = dateStr.split('-').map(Number);
-        const [hour, minute] = timeStr.split(':').map(Number);
-        const d = new Date(year, month - 1, day, hour, minute);
-        return isNaN(d.getTime()) ? null : d;
-    };
-
     // 0 = niedziela, 1 = poniedziałek, 2 = wtorek, 3 = środa, 4 = czwartek, ...
     const getWeekdayFromDate = (dateStr) => {
         if (!dateStr) return null;
@@ -63,7 +55,7 @@
         if (isNaN(d.getTime())) return null;
         return d.getDay();
     };
-    
+
     // Zwraca Date granicy priorytetu (dzień treningu, godz. 16:00)
     const getPriorityCutoffDate = (dateStr) => {
         if (!dateStr) return null;
@@ -72,7 +64,6 @@
         return isNaN(d.getTime()) ? null : d;
     };
 
-    
     // Przekształcenie ISO `termin` z bookings na klucz jak w trainings: "YYYY-MM-DD HH:MM"
     const bookingTerminToKey = (terminIso) => {
         if (!terminIso) return '';
@@ -93,7 +84,31 @@
         return `${year}-${month}-${day} ${hours}:${minutes}`;
     };
 
-    // Ikony SVG
+    // Czy osoba ma aktywny abonament w danym dniu (YYYY-MM-DD)
+    const hasSubscriptionForDateFactory = (subscriptions) => (name, dateStr) => {
+        if (!name || !dateStr) return false;
+
+        const [tYear, tMonth, tDay] = dateStr.split('-').map(Number);
+        const trainingDate = new Date(tYear, tMonth - 1, tDay);
+        if (isNaN(trainingDate)) return false;
+
+        return subscriptions.some(sub => {
+            if (sub.name !== name || !sub.dateFrom || !sub.dateTo) return false;
+
+            const [fromY, fromM, fromD] = sub.dateFrom.split('-').map(Number);
+            const [toY, toM, toD] = sub.dateTo.split('-').map(Number);
+
+            const fromDate = new Date(fromY, fromM - 1, fromD);
+            const toDate = new Date(toY, toM - 1, toD, 23, 59, 59, 999); // do końca dnia
+
+            if (isNaN(fromDate) || isNaN(toDate)) return false;
+
+            return trainingDate >= fromDate && trainingDate <= toDate;
+        });
+    };
+
+    // --- Ikony SVG ---
+
     const Calendar = ({ size = 24, className = "" }) => (
         <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
              stroke="currentColor" strokeWidth="2" strokeLinecap="round"
@@ -180,11 +195,9 @@
 
         const callAPI = async (action, data = {}) => {
             const params = new URLSearchParams({ action, ...data });
-
             const response = await fetch(`${API_URL}?${params.toString()}`, {
                 method: 'GET',
             });
-
             return await response.json();
         };
 
@@ -213,35 +226,12 @@
             }
         };
 
-        // Bez automatycznego odświeżania
         useEffect(() => {
             loadData();
         }, []);
 
-        const hasSubscription = (name) => {
-            if (!name) return false;
-        
-            const today = new Date();
-            const todayY = today.getFullYear();
-            const todayM = today.getMonth();
-            const todayD = today.getDate();
-        
-            // Uproszczenie: uznajemy, że dateFrom/dateTo są w formacie "YYYY-MM-DD"
-            return subscriptions.some(sub => {
-                if (sub.name !== name) return false;
-                if (!sub.dateFrom || !sub.dateTo) return false;
-        
-                const [fromY, fromM, fromD] = sub.dateFrom.split('-').map(Number);
-                const [toY, toM, toD] = sub.dateTo.split('-').map(Number);
-        
-                const fromDate = new Date(fromY, fromM - 1, fromD);
-                const toDate = new Date(toY, toM - 1, toD, 23, 59, 59, 999); // do końca dnia
-        
-                // Porównujemy bezpośrednio daty
-                return today >= fromDate && today <= toDate;
-            });
-        };
-
+        // Funkcja sprawdzająca abonament na dzień treningu
+        const hasSubscriptionForDate = hasSubscriptionForDateFactory(subscriptions);
 
         const updateNameSuggestions = (value) => {
             const query = value.trim().toLowerCase();
@@ -268,7 +258,7 @@
             setShowSuggestions(filtered.length > 0);
         };
 
-        const handleAddBooking = async (terminKey) => {
+        const handleAddBooking = async (terminKey, trainingDate, trainingTime) => {
             if (!bookingName.trim()) {
                 alert('Wpisz swoje imię i nazwisko');
                 return;
@@ -326,45 +316,46 @@
                 grouped[key] = {
                     ...training,
                     participants: [],
-                    key // zachowaj dla wygody
+                    key
                 };
             });
 
             bookings.forEach(booking => {
                 const key = bookingTerminToKey(booking.termin);
-                if (grouped[key]) {
+                const training = grouped[key];
+
+                if (training) {
                     grouped[key].participants.push({
                         ...booking,
-                        hasSubscription: hasSubscription(booking.name)
+                        hasSubscription: hasSubscriptionForDate(booking.name, training.date)
                     });
                 }
             });
 
             Object.keys(grouped).forEach(key => {
                 const training = grouped[key];
-                const trainingStart = getTrainingStartDate(training.date, training.time);
                 const priorityCutoff = getPriorityCutoffDate(training.date);
                 const weekday = getWeekdayFromDate(training.date); // 0..6
-            
+
                 grouped[key].participants.sort((a, b) => {
                     const aTime = new Date(a.timestamp);
                     const bTime = new Date(b.timestamp);
-            
+
                     if (isNaN(aTime) || isNaN(bTime)) {
                         return aTime - bTime;
                     }
-            
+
                     // WTORKI (2) – zawsze "kto pierwszy, ten lepszy", brak przewagi abonamentu
                     if (weekday === 2) {
                         return aTime - bTime;
                     }
-            
+
                     // CZWARTKI (4) – reguła: do 16:00 abonament ma priorytet,
                     // po 16:00 wszyscy równi (dla zapisów po 16:00)
                     if (weekday === 4 && priorityCutoff) {
                         const aBeforeCutoff = aTime < priorityCutoff;
                         const bBeforeCutoff = bTime < priorityCutoff;
-            
+
                         // Oba zapisy przed 16:00 – abonament ma priorytet
                         if (aBeforeCutoff && bBeforeCutoff) {
                             if (a.hasSubscription !== b.hasSubscription) {
@@ -372,23 +363,21 @@
                             }
                             return aTime - bTime;
                         }
-            
+
                         // Oba zapisy po 16:00 – liczy się tylko kolejność
                         if (!aBeforeCutoff && !bBeforeCutoff) {
                             return aTime - bTime;
                         }
-            
+
                         // Jeden przed 16:00, drugi po 16:00 –
                         // zachowujemy porządek czasowy (wcześniejszy wyżej)
                         return aTime - bTime;
                     }
-            
+
                     // Inne dni – na razie też "kto pierwszy, ten lepszy"
                     return aTime - bTime;
                 });
             });
-
-
 
             return grouped;
         };
@@ -484,7 +473,7 @@
                                     const waitingCount = training.participants.length - acceptedCount;
 
                                     return (
-                                        <div key={key} className="bg-white rounded-xl shadow-lg overflow-visible">
+                                        <div key={key} className="bg-white rounded-xl shadow-lg">
                                             <div className="bg-gradient-to-r from-orange-500 to-blue-500 p-4 text-white">
                                                 <div className="flex justify-between items-start">
                                                     <div>
@@ -578,7 +567,10 @@
                                                                         setTimeout(() => setShowSuggestions(false), 150);
                                                                     }}
                                                                     className="w-full px-3 py-2 border rounded-lg"
-                                                                    onKeyPress={(e) => e.key === 'Enter' && handleAddBooking(key)}
+                                                                    onKeyPress={(e) =>
+                                                                        e.key === 'Enter' &&
+                                                                        handleAddBooking(key, training.date, training.time)
+                                                                    }
                                                                     disabled={submitting}
                                                                 />
 
@@ -604,7 +596,7 @@
 
                                                             <div className="flex gap-2">
                                                                 <button
-                                                                    onClick={() => handleAddBooking(key)}
+                                                                    onClick={() => handleAddBooking(key, training.date, training.time)}
                                                                     className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition disabled:bg-gray-400"
                                                                     disabled={submitting}
                                                                 >
