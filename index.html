@@ -47,6 +47,20 @@
         return `${dayName}, ${dd}.${mm}.${yyyy} ${hh}:${min}`;
     };
 
+    // Czy trening już się odbył (na podstawie date + time)
+    const isTrainingInPast = (dateStr, timeStr) => {
+        if (!dateStr || !timeStr) return false;
+
+        const [year, month, day] = dateStr.split('-').map(Number);
+        const [hour, minute] = timeStr.split(':').map(Number);
+
+        const trainingDate = new Date(year, month - 1, day, hour, minute);
+        if (isNaN(trainingDate.getTime())) return false;
+
+        const now = new Date();
+        return trainingDate < now;
+    };
+
     // 0 = niedziela, 1 = poniedziałek, 2 = wtorek, 3 = środa, 4 = czwartek, ...
     const getWeekdayFromDate = (dateStr) => {
         if (!dateStr) return null;
@@ -193,6 +207,13 @@
         const [nameSuggestions, setNameSuggestions] = useState([]);
         const [showSuggestions, setShowSuggestions] = useState(false);
 
+        // accordion: key -> boolean (true = zwinięty)
+        const [collapsedTrainings, setCollapsedTrainings] = useState({});
+
+        // komunikaty statusu zamiast alertów
+        // { type: 'success' | 'error', text: string }
+        const [infoMessage, setInfoMessage] = useState(null);
+
         const callAPI = async (action, data = {}) => {
             const params = new URLSearchParams({ action, ...data });
             const response = await fetch(`${API_URL}?${params.toString()}`, {
@@ -260,7 +281,13 @@
 
         const handleAddBooking = async (terminKey, trainingDate, trainingTime) => {
             if (!bookingName.trim()) {
-                alert('Wpisz swoje imię i nazwisko');
+                setInfoMessage({ type: 'error', text: 'Wpisz swoje imię i nazwisko.' });
+                return;
+            }
+
+            // Blokada zapisu na treningi w przeszłości (dodatkowa, defensywna)
+            if (isTrainingInPast(trainingDate, trainingTime)) {
+                setInfoMessage({ type: 'error', text: 'Nie można zapisać się na trening w przeszłości.' });
                 return;
             }
 
@@ -272,17 +299,18 @@
                 });
 
                 if (result.error) {
-                    alert(result.error);
+                    setInfoMessage({ type: 'error', text: result.error });
                 } else {
                     setBookingName('');
                     setShowBookingForm(null);
                     setNameSuggestions([]);
                     setShowSuggestions(false);
+                    setInfoMessage({ type: 'success', text: 'Zapisano na trening.' });
                     await loadData();
                 }
             } catch (err) {
-                alert('Błąd zapisu. Spróbuj ponownie.');
                 console.error(err);
+                setInfoMessage({ type: 'error', text: 'Błąd zapisu. Spróbuj ponownie.' });
             } finally {
                 setSubmitting(false);
             }
@@ -296,13 +324,14 @@
                 const result = await callAPI('deleteBooking', { termin: terminKey, name });
 
                 if (result.error) {
-                    alert(result.error);
+                    setInfoMessage({ type: 'error', text: result.error });
                 } else {
+                    setInfoMessage({ type: 'success', text: 'Wypisano z treningu.' });
                     await loadData();
                 }
             } catch (err) {
-                alert('Błąd wypisywania. Spróbuj ponownie.');
                 console.error(err);
+                setInfoMessage({ type: 'error', text: 'Błąd wypisywania. Spróbuj ponownie.' });
             } finally {
                 setSubmitting(false);
             }
@@ -384,6 +413,16 @@
 
         const groupedBookings = getBookingsByTraining();
 
+        // Inicjalizacja domyślnego stanu accordiona (przeszłe zwinięte)
+        useEffect(() => {
+            const initialState = {};
+            Object.entries(groupedBookings).forEach(([key, training]) => {
+                const inPast = isTrainingInPast(training.date, training.time);
+                initialState[key] = inPast; // true = zwinięty
+            });
+            setCollapsedTrainings(initialState);
+        }, [trainings, bookings]);
+
         if (loading) {
             return (
                 <div className="min-h-screen bg-gradient-to-br from-orange-50 to-blue-50 flex items-center justify-center">
@@ -399,7 +438,7 @@
             <div className="min-h-screen bg-gradient-to-br from-orange-50 to-blue-50 p-4">
                 <div className="max-w-6xl mx-auto">
                     <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-                        <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-3">
                                 <div className="bg-orange-500 p-3 rounded-lg">
                                     <Calendar size={28} className="text-white" />
@@ -410,7 +449,10 @@
                                 </div>
                             </div>
                             <button
-                                onClick={loadData}
+                                onClick={async () => {
+                                    await loadData();
+                                    setInfoMessage({ type: 'success', text: 'Dane zostały odświeżone.' });
+                                }}
                                 className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition flex items-center gap-2"
                                 disabled={submitting}
                             >
@@ -420,13 +462,31 @@
                         </div>
 
                         {error && (
-                            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 flex items-center gap-3">
+                            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 flex items-center gap-3">
                                 <AlertCircle className="text-red-500" size={24} />
                                 <p className="text-red-700">{error}</p>
                             </div>
                         )}
 
-                        <div className="flex gap-2 mb-6 flex-wrap">
+                        {infoMessage && (
+                            <div
+                                className={`mb-4 rounded-lg px-4 py-2 text-sm flex justify-between items-center ${
+                                    infoMessage.type === 'error'
+                                        ? 'bg-red-50 text-red-700 border border-red-200'
+                                        : 'bg-green-50 text-green-700 border border-green-200'
+                                }`}
+                            >
+                                <span>{infoMessage.text}</span>
+                                <button
+                                    onClick={() => setInfoMessage(null)}
+                                    className="text-xs font-semibold"
+                                >
+                                    Zamknij
+                                </button>
+                            </div>
+                        )}
+
+                        <div className="flex gap-2 mb-2 flex-wrap">
                             <button
                                 onClick={() => setActiveTab('bookings')}
                                 className={`px-4 py-2 rounded-lg transition ${
@@ -472,167 +532,239 @@
                                     const acceptedCount = training.participants.filter((_, i) => i < training.limit).length;
                                     const waitingCount = training.participants.length - acceptedCount;
 
+                                    const trainingInPast = isTrainingInPast(training.date, training.time);
+                                    const isCollapsed = collapsedTrainings[key] ?? trainingInPast;
+
+                                    const toggleCollapsed = () => {
+                                        setCollapsedTrainings(prev => ({
+                                            ...prev,
+                                            [key]: !isCollapsed,
+                                        }));
+                                    };
+
                                     return (
-                                        <div key={key} className="bg-white rounded-xl shadow-lg">
-                                            <div className="bg-gradient-to-r from-orange-500 to-blue-500 p-4 text-white">
-                                                <div className="flex justify-between items-start">
+                                        <div key={key} className="bg-white rounded-xl shadow-lg overflow-hidden">
+                                            {/* NAGŁÓWEK – accordion button */}
+                                            <button
+                                                type="button"
+                                                onClick={toggleCollapsed}
+                                                className={`w-full flex items-center justify-between px-4 py-3
+                                                    ${trainingInPast
+                                                        ? 'bg-gray-200 text-gray-700'
+                                                        : 'bg-gradient-to-r from-orange-500 to-blue-500 text-white'
+                                                    }`}
+                                            >
+                                                <div className="flex items-center gap-3 text-left flex-1">
+                                                    <div className={`p-2 rounded-lg
+                                                        ${trainingInPast ? 'bg-gray-300' : 'bg-white/20'}
+                                                    `}>
+                                                        <Calendar
+                                                            size={22}
+                                                            className={trainingInPast ? 'text-gray-700' : 'text-white'}
+                                                        />
+                                                    </div>
                                                     <div>
-                                                        <h2 className="text-xl font-bold">
+                                                        <div className="font-semibold">
                                                             {formatTrainingDateTime(training.date, training.time)}
-                                                        </h2>
+                                                        </div>
+                                                        <div className="flex gap-3 text-xs mt-1 flex-wrap">
+                                                            <span className="flex items-center gap-1">
+                                                                <Users size={14} />
+                                                                Limit: {training.limit}
+                                                            </span>
+                                                            <span className="flex items-center gap-1">
+                                                                <Check size={14} />
+                                                                Zapisanych: {acceptedCount}/{training.limit}
+                                                            </span>
+                                                            {waitingCount > 0 && (
+                                                                <span>Lista rezerwowa: {waitingCount}</span>
+                                                            )}
+                                                            {trainingInPast && (
+                                                                <span className="uppercase tracking-wide text-[10px] bg-gray-300 text-gray-800 px-2 py-0.5 rounded-full">
+                                                                    ZAKOŃCZONY
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                                <div className="flex gap-4 mt-3 text-sm flex-wrap">
-                                                    <div className="flex items-center gap-2">
-                                                        <Users size={18} />
-                                                        <span>Limit: {training.limit} osób</span>
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <Check size={18} />
-                                                        <span>Zapisanych: {acceptedCount}/{training.limit}</span>
-                                                    </div>
-                                                    {waitingCount > 0 && (
-                                                        <div className="flex items-center gap-2">
-                                                            <span>Lista rezerwowa: {waitingCount}</span>
+
+                                                {/* Strzałka accordionu */}
+                                                <span
+                                                    className={`ml-4 transform transition-transform duration-200
+                                                        ${isCollapsed ? '' : 'rotate-180'}
+                                                    `}
+                                                >
+                                                    <svg
+                                                        width="20"
+                                                        height="20"
+                                                        viewBox="0 0 24 24"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        strokeWidth="2"
+                                                        strokeLinecap="round"
+                                                        strokeLinejoin="round"
+                                                    >
+                                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                                    </svg>
+                                                </span>
+                                            </button>
+
+                                            {/* ZAWARTOŚĆ – chowana/pokazywana */}
+                                            {!isCollapsed && (
+                                                <div className="p-6">
+                                                    {training.participants.length === 0 ? (
+                                                        <p className="text-gray-400 text-center py-4">
+                                                            Brak zapisanych uczestników
+                                                        </p>
+                                                    ) : (
+                                                        <div className="space-y-2 mb-4">
+                                                            {training.participants.map((participant, index) => {
+                                                                const status = index < training.limit ? 'accepted' : 'waiting';
+                                                                return (
+                                                                    <div
+                                                                        key={index}
+                                                                        className={`flex items-center justify-between p-3 rounded-lg ${
+                                                                            status === 'accepted'
+                                                                                ? 'bg-green-50 border border-green-200'
+                                                                                : 'bg-yellow-50 border border-yellow-200'
+                                                                        }`}
+                                                                    >
+                                                                        <div className="flex items-center gap-3 flex-wrap">
+                                                                            <span className="font-semibold text-gray-600">
+                                                                                {index + 1}.
+                                                                            </span>
+                                                                            <span className="font-medium text-gray-800">
+                                                                                {participant.name}
+                                                                            </span>
+                                                                            {participant.hasSubscription && (
+                                                                                <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full font-medium">
+                                                                                    ABONAMENT
+                                                                                </span>
+                                                                            )}
+                                                                            {status === 'waiting' && (
+                                                                                <span className="bg-yellow-500 text-white text-xs px-2 py-1 rounded-full font-medium">
+                                                                                    LISTA REZERWOWA
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+
+                                                                        {/* (opcjonalnie) blokada wypisywania z przeszłych */}
+                                                                        {trainingInPast ? (
+                                                                            <span className="text-xs text-gray-400">
+                                                                                Zakończony
+                                                                            </span>
+                                                                        ) : (
+                                                                            <button
+                                                                                onClick={() => handleDeleteBooking(key, participant.name)}
+                                                                                className="text-red-500 hover:text-red-700 transition"
+                                                                                disabled={submitting}
+                                                                            >
+                                                                                <X size={20} />
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
                                                         </div>
                                                     )}
-                                                </div>
-                                            </div>
 
-                                            <div className="p-6">
-                                                {training.participants.length === 0 ? (
-                                                    <p className="text-gray-400 text-center py-4">Brak zapisanych uczestników</p>
-                                                ) : (
-                                                    <div className="space-y-2 mb-4">
-                                                        {training.participants.map((participant, index) => {
-                                                            const status = index < training.limit ? 'accepted' : 'waiting';
-                                                            return (
-                                                                <div
-                                                                    key={index}
-                                                                    className={`flex items-center justify-between p-3 rounded-lg ${
-                                                                        status === 'accepted'
-                                                                            ? 'bg-green-50 border border-green-200'
-                                                                            : 'bg-yellow-50 border border-yellow-200'
-                                                                    }`}
-                                                                >
-                                                                    <div className="flex items-center gap-3 flex-wrap">
-                                                                        <span className="font-semibold text-gray-600">
-                                                                            {index + 1}.
-                                                                        </span>
-                                                                        <span className="font-medium text-gray-800">
-                                                                            {participant.name}
-                                                                        </span>
-                                                                        {participant.hasSubscription && (
-                                                                            <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full font-medium">
-                                                                                ABONAMENT
-                                                                            </span>
-                                                                        )}
-                                                                        {status === 'waiting' && (
-                                                                            <span className="bg-yellow-500 text-white text-xs px-2 py-1 rounded-full font-medium">
-                                                                                LISTA REZERWOWA
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                    <button
-                                                                        onClick={() => handleDeleteBooking(key, participant.name)}
-                                                                        className="text-red-500 hover:text-red-700 transition"
-                                                                        disabled={submitting}
-                                                                    >
-                                                                        <X size={20} />
-                                                                    </button>
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                )}
+                                                    {/* Dół karty – zapisy / informacja o zamkniętych zapisach */}
+                                                    {trainingInPast ? (
+                                                        <div className="w-full py-3 text-center text-gray-400 text-sm border-t border-gray-100">
+                                                            Zapisy na ten trening zostały zamknięte (termin w przeszłości).
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            {showBookingForm === key ? (
+                                                                <div className="bg-blue-50 p-4 rounded-lg">
+                                                                    <h4 className="font-semibold mb-3 text-gray-800">Zapisz się na trening</h4>
+                                                                    <div className="space-y-3">
+                                                                        <div className="relative">
+                                                                            <input
+                                                                                type="text"
+                                                                                placeholder="Imię i nazwisko"
+                                                                                value={bookingName}
+                                                                                onChange={(e) => {
+                                                                                    const value = e.target.value;
+                                                                                    setBookingName(value);
+                                                                                    updateNameSuggestions(value);
+                                                                                }}
+                                                                                onFocus={() => {
+                                                                                    if (nameSuggestions.length > 0) setShowSuggestions(true);
+                                                                                }}
+                                                                                onBlur={() => {
+                                                                                    setTimeout(() => setShowSuggestions(false), 150);
+                                                                                }}
+                                                                                className="w-full px-3 py-2 border rounded-lg"
+                                                                                onKeyPress={(e) =>
+                                                                                    e.key === 'Enter' &&
+                                                                                    handleAddBooking(key, training.date, training.time)
+                                                                                }
+                                                                                disabled={submitting}
+                                                                            />
 
-                                                {showBookingForm === key ? (
-                                                    <div className="bg-blue-50 p-4 rounded-lg">
-                                                        <h4 className="font-semibold mb-3 text-gray-800">Zapisz się na trening</h4>
-                                                        <div className="space-y-3">
-                                                            <div className="relative">
-                                                                <input
-                                                                    type="text"
-                                                                    placeholder="Imię i nazwisko"
-                                                                    value={bookingName}
-                                                                    onChange={(e) => {
-                                                                        const value = e.target.value;
-                                                                        setBookingName(value);
-                                                                        updateNameSuggestions(value);
-                                                                    }}
-                                                                    onFocus={() => {
-                                                                        if (nameSuggestions.length > 0) setShowSuggestions(true);
-                                                                    }}
-                                                                    onBlur={() => {
-                                                                        setTimeout(() => setShowSuggestions(false), 150);
-                                                                    }}
-                                                                    className="w-full px-3 py-2 border rounded-lg"
-                                                                    onKeyPress={(e) =>
-                                                                        e.key === 'Enter' &&
-                                                                        handleAddBooking(key, training.date, training.time)
-                                                                    }
-                                                                    disabled={submitting}
-                                                                />
+                                                                            {showSuggestions && nameSuggestions.length > 0 && (
+                                                                                <div className="absolute z-10 mt-1 w-full border border-gray-300 rounded-lg bg-white max-h-40 overflow-y-auto text-sm shadow">
+                                                                                    {nameSuggestions.map((name, i) => (
+                                                                                        <button
+                                                                                            key={i}
+                                                                                            type="button"
+                                                                                            className="w-full text-left px-3 py-2 hover:bg-blue-50"
+                                                                                            onMouseDown={(e) => {
+                                                                                                e.preventDefault();
+                                                                                                setBookingName(name);
+                                                                                                setShowSuggestions(false);
+                                                                                            }}
+                                                                                        >
+                                                                                            {name}
+                                                                                        </button>
+                                                                                    ))}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
 
-                                                                {showSuggestions && nameSuggestions.length > 0 && (
-                                                                    <div className="absolute z-10 mt-1 w-full border border-gray-300 rounded-lg bg-white max-h-40 overflow-y-auto text-sm shadow">
-                                                                        {nameSuggestions.map((name, i) => (
+                                                                        <div className="flex gap-2">
                                                                             <button
-                                                                                key={i}
-                                                                                type="button"
-                                                                                className="w-full text-left px-3 py-2 hover:bg-blue-50"
-                                                                                onMouseDown={(e) => {
-                                                                                    e.preventDefault();
-                                                                                    setBookingName(name);
+                                                                                onClick={() => handleAddBooking(key, training.date, training.time)}
+                                                                                className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition disabled:bg-gray-400"
+                                                                                disabled={submitting}
+                                                                            >
+                                                                                {submitting ? 'Zapisywanie...' : 'Zapisz się'}
+                                                                            </button>
+                                                                            <button
+                                                                                onClick={() => {
+                                                                                    setShowBookingForm(null);
+                                                                                    setBookingName('');
+                                                                                    setNameSuggestions([]);
                                                                                     setShowSuggestions(false);
                                                                                 }}
+                                                                                className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 transition"
+                                                                                disabled={submitting}
                                                                             >
-                                                                                {name}
+                                                                                Anuluj
                                                                             </button>
-                                                                        ))}
+                                                                        </div>
                                                                     </div>
-                                                                )}
-                                                            </div>
-
-                                                            <div className="flex gap-2">
-                                                                <button
-                                                                    onClick={() => handleAddBooking(key, training.date, training.time)}
-                                                                    className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition disabled:bg-gray-400"
-                                                                    disabled={submitting}
-                                                                >
-                                                                    {submitting ? 'Zapisywanie...' : 'Zapisz się'}
-                                                                </button>
+                                                                </div>
+                                                            ) : (
                                                                 <button
                                                                     onClick={() => {
-                                                                        setShowBookingForm(null);
+                                                                        setShowBookingForm(key);
                                                                         setBookingName('');
                                                                         setNameSuggestions([]);
                                                                         setShowSuggestions(false);
                                                                     }}
-                                                                    className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 transition"
+                                                                    className="w-full bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 transition flex items-center justify-center gap-2 disabled:bg-gray-400"
                                                                     disabled={submitting}
                                                                 >
-                                                                    Anuluj
+                                                                    <UserPlus size={20} />
+                                                                    Zapisz się na trening
                                                                 </button>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                ) : (
-                                                    <button
-                                                        onClick={() => {
-                                                            setShowBookingForm(key);
-                                                            setBookingName('');
-                                                            setNameSuggestions([]);
-                                                            setShowSuggestions(false);
-                                                        }}
-                                                        className="w-full bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 transition flex items-center justify-center gap-2 disabled:bg-gray-400"
-                                                        disabled={submitting}
-                                                    >
-                                                        <UserPlus size={20} />
-                                                        Zapisz się na trening
-                                                    </button>
-                                                )}
-                                            </div>
+                                                            )}
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })
