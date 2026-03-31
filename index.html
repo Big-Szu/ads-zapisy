@@ -19,6 +19,10 @@
     const API_URL = 'https://script.google.com/macros/s/AKfycbw8WXh4SQei9fEYWeJpsnsbiNe2X6AZiXdMt8QLYlnWQB1XqkeosenRbVMjq3_2OzdvWg/exec';
     const API_TOKEN = 'ad1a428187fac9e5c47fdb18b42f77780ee4e7a5cd30b29cb839f02e4842a511';
 
+    // Dni, w których obowiązuje reguła:
+    // do 16:00 abonament ma priorytet wśród zapisów sprzed cutoff
+    const PRIORITY_WEEKDAYS = [1, 2, 4]; // poniedziałek, wtorek, czwartek
+
     // =========================
     // Helpery
     // =========================
@@ -164,11 +168,9 @@
             if (aInvalid) return 1;
             if (bInvalid) return -1;
 
-            if (weekday === 2) {
-                return aTime.getTime() - bTime.getTime();
-            }
-
-            if (weekday === 4 && priorityCutoff) {
+            // Poniedziałek, wtorek, czwartek:
+            // do 16:00 abonament ma priorytet wśród zapisów sprzed cutoff
+            if (PRIORITY_WEEKDAYS.includes(weekday) && priorityCutoff) {
                 const cutoffTs = priorityCutoff.getTime();
                 const aBeforeCutoff = aTime.getTime() < cutoffTs;
                 const bBeforeCutoff = bTime.getTime() < cutoffTs;
@@ -187,6 +189,7 @@
                 return aTime.getTime() - bTime.getTime();
             }
 
+            // Pozostałe dni: kto pierwszy, ten lepszy
             return aTime.getTime() - bTime.getTime();
         });
     };
@@ -304,24 +307,23 @@
         };
 
         const callApiPost = async (action, data = {}) => {
-    const body = new URLSearchParams({
-        action,
-        token: API_TOKEN,
-        ...data,
-    });
+            const body = new URLSearchParams({
+                action,
+                token: API_TOKEN,
+                ...data,
+            });
 
-    const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-        },
-        body: body.toString(),
-    });
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                },
+                body: body.toString(),
+            });
 
-    const result = await response.json();
-    return result;
-};
-
+            const result = await response.json();
+            return result;
+        };
 
         const loadData = async () => {
             setLoading(true);
