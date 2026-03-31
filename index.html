@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Zapisy na Treningi Siatkówki</title>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -13,81 +14,105 @@
 <div id="root"></div>
 
 <script type="text/babel">
-    const { useState, useEffect } = React;
+    const { useState, useEffect, useMemo } = React;
 
-    // PODMIEŃ na aktualny URL WebAppa, jeśli inny:
-    const API_URL = 'https://script.google.com/macros/s/AKfycbzhxVvhsz-F5H1z6aiakoLeF1SMP-HzAZjJnEnPPPu44zooQqO4r_sb9LsBa1WtlGDySw/exec';
+    const API_URL = 'https://script.google.com/macros/s/AKfycbw8WXh4SQei9fEYWeJpsnsbiNe2X6AZiXdMt8QLYlnWQB1XqkeosenRbVMjq3_2OzdvWg/exec';
+    const API_TOKEN = 'ad1a428187fac9e5c47fdb18b42f77780ee4e7a5cd30b29cb839f02e4842a511';
 
-    // --- Funkcje pomocnicze dat/czasu ---
+    // =========================
+    // Helpery
+    // =========================
 
     const capitalize = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 
-    // Wyświetlanie: „Czwartek, 05.12.2025 19:30”
+    const normalizeName = (name) => String(name || '').trim().replace(/\s+/g, ' ');
+
+    const validateName = (name) => {
+        const norm = normalizeName(name);
+        if (!norm) return 'Wpisz swoje imię i nazwisko.';
+        if (norm.length < 3) return 'Imię i nazwisko jest za krótkie.';
+        if (norm.length > 60) return 'Imię i nazwisko jest za długie.';
+        return null;
+    };
+
+    const isValidDateObj = (d) => d instanceof Date && !isNaN(d.getTime());
+
+    const parseLocalDateTime = (dateStr, timeStr) => {
+        if (!dateStr || !timeStr) return null;
+
+        const dateParts = dateStr.split('-').map(Number);
+        const timeParts = timeStr.split(':').map(Number);
+
+        if (dateParts.length !== 3 || timeParts.length !== 2) return null;
+
+        const [year, month, day] = dateParts;
+        const [hour, minute] = timeParts;
+
+        const d = new Date(year, month - 1, day, hour, minute, 0, 0);
+        return isValidDateObj(d) ? d : null;
+    };
+
+    const parseDateOnly = (dateStr) => {
+        if (!dateStr) return null;
+
+        const parts = dateStr.split('-').map(Number);
+        if (parts.length !== 3) return null;
+
+        const [year, month, day] = parts;
+        const d = new Date(year, month - 1, day, 0, 0, 0, 0);
+
+        if (!isValidDateObj(d)) return null;
+        if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
+
+        return d;
+    };
+
     const formatTrainingDateTime = (dateStr, timeStr) => {
-        if (!dateStr || !timeStr) return `${dateStr || ''} ${timeStr || ''}`.trim();
-
-        const [year, month, day] = dateStr.split('-').map(Number);
-        const [hour, minute] = timeStr.split(':').map(Number);
-
-        const d = new Date(year, month - 1, day, hour, minute);
-        if (isNaN(d.getTime())) {
-            return `${dateStr} ${timeStr}`;
-        }
+        const d = parseLocalDateTime(dateStr, timeStr);
+        if (!d) return `${dateStr || ''} ${timeStr || ''}`.trim();
 
         let dayName = d.toLocaleDateString('pl-PL', { weekday: 'long' });
         dayName = capitalize(dayName);
 
-        const dd = String(day).padStart(2, '0');
-        const mm = String(month).padStart(2, '0');
-        const yyyy = String(year);
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const yyyy = String(d.getFullYear());
 
-        const hh = String(hour).padStart(2, '0');
-        const min = String(minute).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const min = String(d.getMinutes()).padStart(2, '0');
 
         return `${dayName}, ${dd}.${mm}.${yyyy} ${hh}:${min}`;
     };
 
-    // Czy trening już się odbył (na podstawie date + time)
     const isTrainingInPast = (dateStr, timeStr) => {
-        if (!dateStr || !timeStr) return false;
-
-        const [year, month, day] = dateStr.split('-').map(Number);
-        const [hour, minute] = timeStr.split(':').map(Number);
-
-        const trainingDate = new Date(year, month - 1, day, hour, minute);
-        if (isNaN(trainingDate.getTime())) return false;
-
-        const now = new Date();
-        return trainingDate < now;
+        const trainingDate = parseLocalDateTime(dateStr, timeStr);
+        if (!trainingDate) return false;
+        return trainingDate.getTime() < Date.now();
     };
 
-    // 0 = niedziela, 1 = poniedziałek, 2 = wtorek, 3 = środa, 4 = czwartek, ...
     const getWeekdayFromDate = (dateStr) => {
-        if (!dateStr) return null;
-        const [year, month, day] = dateStr.split('-').map(Number);
-        const d = new Date(year, month - 1, day);
-        if (isNaN(d.getTime())) return null;
+        const d = parseDateOnly(dateStr);
+        if (!d) return null;
         return d.getDay();
     };
 
-    // Zwraca Date granicy priorytetu (dzień treningu, godz. 16:00)
     const getPriorityCutoffDate = (dateStr) => {
-        if (!dateStr) return null;
-        const [year, month, day] = dateStr.split('-').map(Number);
-        const d = new Date(year, month - 1, day, 16, 0); // 16:00 lokalnie
-        return isNaN(d.getTime()) ? null : d;
+        const d = parseDateOnly(dateStr);
+        if (!d) return null;
+        d.setHours(16, 0, 0, 0);
+        return d;
     };
 
-    // Przekształcenie ISO `termin` z bookings na klucz jak w trainings: "YYYY-MM-DD HH:MM"
-    const bookingTerminToKey = (terminIso) => {
-        if (!terminIso) return '';
-        // jeśli wygląda już jak "YYYY-MM-DD HH:MM", zostaw
-        if (terminIso.includes(' ') && terminIso.includes('-')) return terminIso;
+    const bookingTerminToKey = (terminValue) => {
+        if (!terminValue) return '';
 
-        const d = new Date(terminIso);
-        if (isNaN(d.getTime())) {
-            return terminIso;
-        }
+        const str = String(terminValue).trim();
+        const localKeyPattern = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
+
+        if (localKeyPattern.test(str)) return str;
+
+        const d = new Date(str);
+        if (!isValidDateObj(d)) return str;
 
         const year = d.getFullYear();
         const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -98,30 +123,77 @@
         return `${year}-${month}-${day} ${hours}:${minutes}`;
     };
 
-    // Czy osoba ma aktywny abonament w danym dniu (YYYY-MM-DD)
+    const buildTrainingKey = (training) => `${training.date} ${training.time}`;
+
     const hasSubscriptionForDateFactory = (subscriptions) => (name, dateStr) => {
         if (!name || !dateStr) return false;
 
-        const [tYear, tMonth, tDay] = dateStr.split('-').map(Number);
-        const trainingDate = new Date(tYear, tMonth - 1, tDay);
-        if (isNaN(trainingDate)) return false;
+        const trainingDate = parseDateOnly(dateStr);
+        if (!trainingDate) return false;
+
+        const normalizedName = normalizeName(name).toLowerCase();
 
         return subscriptions.some(sub => {
-            if (sub.name !== name || !sub.dateFrom || !sub.dateTo) return false;
+            if (!sub?.name || !sub?.dateFrom || !sub?.dateTo) return false;
+            if (normalizeName(sub.name).toLowerCase() !== normalizedName) return false;
 
-            const [fromY, fromM, fromD] = sub.dateFrom.split('-').map(Number);
-            const [toY, toM, toD] = sub.dateTo.split('-').map(Number);
+            const fromDate = parseDateOnly(sub.dateFrom);
+            const toDate = parseDateOnly(sub.dateTo);
 
-            const fromDate = new Date(fromY, fromM - 1, fromD);
-            const toDate = new Date(toY, toM - 1, toD, 23, 59, 59, 999); // do końca dnia
+            if (!fromDate || !toDate) return false;
 
-            if (isNaN(fromDate) || isNaN(toDate)) return false;
+            toDate.setHours(23, 59, 59, 999);
 
-            return trainingDate >= fromDate && trainingDate <= toDate;
+            return trainingDate.getTime() >= fromDate.getTime() &&
+                   trainingDate.getTime() <= toDate.getTime();
         });
     };
 
-    // --- Ikony SVG ---
+    const sortParticipants = (participants, training) => {
+        const priorityCutoff = getPriorityCutoffDate(training.date);
+        const weekday = getWeekdayFromDate(training.date);
+
+        return [...participants].sort((a, b) => {
+            const aTime = new Date(a.timestamp);
+            const bTime = new Date(b.timestamp);
+
+            const aInvalid = !isValidDateObj(aTime);
+            const bInvalid = !isValidDateObj(bTime);
+
+            if (aInvalid && bInvalid) return 0;
+            if (aInvalid) return 1;
+            if (bInvalid) return -1;
+
+            if (weekday === 2) {
+                return aTime.getTime() - bTime.getTime();
+            }
+
+            if (weekday === 4 && priorityCutoff) {
+                const cutoffTs = priorityCutoff.getTime();
+                const aBeforeCutoff = aTime.getTime() < cutoffTs;
+                const bBeforeCutoff = bTime.getTime() < cutoffTs;
+
+                if (aBeforeCutoff && bBeforeCutoff) {
+                    if (a.hasSubscription !== b.hasSubscription) {
+                        return a.hasSubscription ? -1 : 1;
+                    }
+                    return aTime.getTime() - bTime.getTime();
+                }
+
+                if (!aBeforeCutoff && !bBeforeCutoff) {
+                    return aTime.getTime() - bTime.getTime();
+                }
+
+                return aTime.getTime() - bTime.getTime();
+            }
+
+            return aTime.getTime() - bTime.getTime();
+        });
+    };
+
+    // =========================
+    // Ikony
+    // =========================
 
     const Calendar = ({ size = 24, className = "" }) => (
         <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -193,55 +265,105 @@
         </svg>
     );
 
+    // =========================
+    // App
+    // =========================
+
     const VolleyballApp = () => {
         const [trainings, setTrainings] = useState([]);
         const [subscriptions, setSubscriptions] = useState([]);
         const [bookings, setBookings] = useState([]);
+
         const [loading, setLoading] = useState(true);
         const [error, setError] = useState(null);
+        const [submitting, setSubmitting] = useState(false);
+
         const [activeTab, setActiveTab] = useState('bookings');
         const [showBookingForm, setShowBookingForm] = useState(null);
         const [bookingName, setBookingName] = useState('');
-        const [submitting, setSubmitting] = useState(false);
 
         const [nameSuggestions, setNameSuggestions] = useState([]);
         const [showSuggestions, setShowSuggestions] = useState(false);
 
-        // accordion: key -> boolean (true = zwinięty)
         const [collapsedTrainings, setCollapsedTrainings] = useState({});
-
-        // komunikaty statusu zamiast alertów
-        // { type: 'success' | 'error', text: string }
         const [infoMessage, setInfoMessage] = useState(null);
 
-        const callAPI = async (action, data = {}) => {
+        const hasSubscriptionForDate = useMemo(
+            () => hasSubscriptionForDateFactory(subscriptions),
+            [subscriptions]
+        );
+
+        const callApiGet = async (action, data = {}) => {
             const params = new URLSearchParams({ action, ...data });
             const response = await fetch(`${API_URL}?${params.toString()}`, {
                 method: 'GET',
             });
-            return await response.json();
+
+            const result = await response.json();
+            return result;
         };
+
+        const callApiPost = async (action, data = {}) => {
+    const body = new URLSearchParams({
+        action,
+        token: API_TOKEN,
+        ...data,
+    });
+
+    const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        },
+        body: body.toString(),
+    });
+
+    const result = await response.json();
+    return result;
+};
+
 
         const loadData = async () => {
             setLoading(true);
             setError(null);
+
             try {
                 const [trainingsRes, subscriptionsRes, bookingsRes] = await Promise.all([
-                    callAPI('getTrainings'),
-                    callAPI('getSubscriptions'),
-                    callAPI('getBookings')
+                    callApiGet('getTrainings'),
+                    callApiGet('getSubscriptions'),
+                    callApiGet('getBookings'),
                 ]);
 
                 if (trainingsRes.error || subscriptionsRes.error || bookingsRes.error) {
-                    throw new Error('Błąd ładowania danych');
+                    throw new Error(
+                        trainingsRes.error ||
+                        subscriptionsRes.error ||
+                        bookingsRes.error ||
+                        'Błąd ładowania danych'
+                    );
                 }
 
-                setTrainings(trainingsRes.trainings || []);
-                setSubscriptions(subscriptionsRes.subscriptions || []);
-                setBookings(bookingsRes.bookings || []);
+                const trainingsData = Array.isArray(trainingsRes.trainings) ? trainingsRes.trainings : [];
+                const subscriptionsData = Array.isArray(subscriptionsRes.subscriptions) ? subscriptionsRes.subscriptions : [];
+                const bookingsData = Array.isArray(bookingsRes.bookings) ? bookingsRes.bookings : [];
+
+                trainingsData.sort((a, b) => {
+                    const aDate = parseLocalDateTime(a.date, a.time);
+                    const bDate = parseLocalDateTime(b.date, b.time);
+
+                    if (!aDate && !bDate) return 0;
+                    if (!aDate) return 1;
+                    if (!bDate) return -1;
+
+                    return aDate.getTime() - bDate.getTime();
+                });
+
+                setTrainings(trainingsData);
+                setSubscriptions(subscriptionsData);
+                setBookings(bookingsData);
             } catch (err) {
-                setError('Nie udało się załadować danych. Sprawdź połączenie.');
                 console.error(err);
+                setError('Nie udało się załadować danych. Sprawdź połączenie.');
             } finally {
                 setLoading(false);
             }
@@ -251,11 +373,59 @@
             loadData();
         }, []);
 
-        // Funkcja sprawdzająca abonament na dzień treningu
-        const hasSubscriptionForDate = hasSubscriptionForDateFactory(subscriptions);
+        const groupedBookings = useMemo(() => {
+            const grouped = {};
+
+            trainings.forEach(training => {
+                const key = buildTrainingKey(training);
+                grouped[key] = {
+                    ...training,
+                    participants: [],
+                    key,
+                };
+            });
+
+            bookings.forEach(booking => {
+                const key = bookingTerminToKey(booking.termin);
+                const training = grouped[key];
+
+                if (training) {
+                    training.participants.push({
+                        ...booking,
+                        hasSubscription: hasSubscriptionForDate(booking.name, training.date),
+                    });
+                }
+            });
+
+            Object.keys(grouped).forEach(key => {
+                grouped[key].participants = sortParticipants(grouped[key].participants, grouped[key]);
+            });
+
+            return grouped;
+        }, [trainings, bookings, hasSubscriptionForDate]);
+
+        useEffect(() => {
+            setCollapsedTrainings(prev => {
+                const next = { ...prev };
+
+                Object.entries(groupedBookings).forEach(([key, training]) => {
+                    if (!(key in next)) {
+                        next[key] = isTrainingInPast(training.date, training.time);
+                    }
+                });
+
+                Object.keys(next).forEach(key => {
+                    if (!(key in groupedBookings)) {
+                        delete next[key];
+                    }
+                });
+
+                return next;
+            });
+        }, [groupedBookings]);
 
         const updateNameSuggestions = (value) => {
-            const query = value.trim().toLowerCase();
+            const query = normalizeName(value).toLowerCase();
 
             if (!query) {
                 setNameSuggestions([]);
@@ -266,7 +436,7 @@
             const names = Array.from(
                 new Set(
                     subscriptions
-                        .map(sub => sub.name)
+                        .map(sub => normalizeName(sub.name))
                         .filter(Boolean)
                 )
             );
@@ -280,22 +450,35 @@
         };
 
         const handleAddBooking = async (terminKey, trainingDate, trainingTime) => {
-            if (!bookingName.trim()) {
-                setInfoMessage({ type: 'error', text: 'Wpisz swoje imię i nazwisko.' });
+            const normalizedBookingName = normalizeName(bookingName);
+
+            const validationError = validateName(normalizedBookingName);
+            if (validationError) {
+                setInfoMessage({ type: 'error', text: validationError });
                 return;
             }
 
-            // Blokada zapisu na treningi w przeszłości (dodatkowa, defensywna)
             if (isTrainingInPast(trainingDate, trainingTime)) {
                 setInfoMessage({ type: 'error', text: 'Nie można zapisać się na trening w przeszłości.' });
                 return;
             }
 
+            const alreadyBooked = bookings.some(b =>
+                bookingTerminToKey(b.termin) === terminKey &&
+                normalizeName(b.name).toLowerCase() === normalizedBookingName.toLowerCase()
+            );
+
+            if (alreadyBooked) {
+                setInfoMessage({ type: 'error', text: 'Ta osoba jest już zapisana na ten trening.' });
+                return;
+            }
+
             setSubmitting(true);
+
             try {
-                const result = await callAPI('addBooking', {
+                const result = await callApiPost('addBooking', {
                     termin: terminKey,
-                    name: bookingName.trim()
+                    name: normalizedBookingName,
                 });
 
                 if (result.error) {
@@ -316,12 +499,20 @@
             }
         };
 
-        const handleDeleteBooking = async (terminKey, name) => {
+        const handleDeleteBooking = async (bookingId) => {
+            if (!bookingId) {
+                setInfoMessage({ type: 'error', text: 'Brak identyfikatora zapisu.' });
+                return;
+            }
+
             if (!confirm('Czy na pewno chcesz wypisać się z treningu?')) return;
 
             setSubmitting(true);
+
             try {
-                const result = await callAPI('deleteBooking', { termin: terminKey, name });
+                const result = await callApiPost('deleteBooking', {
+                    id: bookingId,
+                });
 
                 if (result.error) {
                     setInfoMessage({ type: 'error', text: result.error });
@@ -336,92 +527,6 @@
                 setSubmitting(false);
             }
         };
-
-        const getBookingsByTraining = () => {
-            const grouped = {};
-
-            trainings.forEach(training => {
-                const key = `${training.date} ${training.time}`; // "YYYY-MM-DD HH:MM"
-                grouped[key] = {
-                    ...training,
-                    participants: [],
-                    key
-                };
-            });
-
-            bookings.forEach(booking => {
-                const key = bookingTerminToKey(booking.termin);
-                const training = grouped[key];
-
-                if (training) {
-                    grouped[key].participants.push({
-                        ...booking,
-                        hasSubscription: hasSubscriptionForDate(booking.name, training.date)
-                    });
-                }
-            });
-
-            Object.keys(grouped).forEach(key => {
-                const training = grouped[key];
-                const priorityCutoff = getPriorityCutoffDate(training.date);
-                const weekday = getWeekdayFromDate(training.date); // 0..6
-
-                grouped[key].participants.sort((a, b) => {
-                    const aTime = new Date(a.timestamp);
-                    const bTime = new Date(b.timestamp);
-
-                    if (isNaN(aTime) || isNaN(bTime)) {
-                        return aTime - bTime;
-                    }
-
-                    // WTORKI (2) – zawsze "kto pierwszy, ten lepszy", brak przewagi abonamentu
-                    if (weekday === 2) {
-                        return aTime - bTime;
-                    }
-
-                    // CZWARTKI (4) – reguła: do 16:00 abonament ma priorytet,
-                    // po 16:00 wszyscy równi (dla zapisów po 16:00)
-                    if (weekday === 4 && priorityCutoff) {
-                        const aBeforeCutoff = aTime < priorityCutoff;
-                        const bBeforeCutoff = bTime < priorityCutoff;
-
-                        // Oba zapisy przed 16:00 – abonament ma priorytet
-                        if (aBeforeCutoff && bBeforeCutoff) {
-                            if (a.hasSubscription !== b.hasSubscription) {
-                                return a.hasSubscription ? -1 : 1;
-                            }
-                            return aTime - bTime;
-                        }
-
-                        // Oba zapisy po 16:00 – liczy się tylko kolejność
-                        if (!aBeforeCutoff && !bBeforeCutoff) {
-                            return aTime - bTime;
-                        }
-
-                        // Jeden przed 16:00, drugi po 16:00 –
-                        // zachowujemy porządek czasowy (wcześniejszy wyżej)
-                        return aTime - bTime;
-                    }
-
-                    // Inne dni – na razie też "kto pierwszy, ten lepszy"
-                    return aTime - bTime;
-                });
-            });
-
-            return grouped;
-        };
-
-        const groupedBookings = getBookingsByTraining();
-
-        // Inicjalizacja domyślnego stanu accordiona (przeszłe zwinięte)
-        useEffect(() => {
-            const initialState = {};
-            Object.entries(groupedBookings).forEach(([key, training]) => {
-                const inPast = isTrainingInPast(training.date, training.time);
-                initialState[key] = inPast; // true = zwinięty
-            });
-            setCollapsedTrainings(initialState);
-        }, [trainings, bookings]);
 
         if (loading) {
             return (
@@ -438,7 +543,7 @@
             <div className="min-h-screen bg-gradient-to-br from-orange-50 to-blue-50 p-4">
                 <div className="max-w-6xl mx-auto">
                     <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-                        <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center justify-between mb-4 flex-wrap gap-4">
                             <div className="flex items-center gap-3">
                                 <div className="bg-orange-500 p-3 rounded-lg">
                                     <Calendar size={28} className="text-white" />
@@ -448,12 +553,13 @@
                                     <p className="text-gray-600">System zapisów na siatkówkę</p>
                                 </div>
                             </div>
+
                             <button
                                 onClick={async () => {
                                     await loadData();
                                     setInfoMessage({ type: 'success', text: 'Dane zostały odświeżone.' });
                                 }}
-                                className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition flex items-center gap-2"
+                                className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition flex items-center gap-2 disabled:bg-gray-400"
                                 disabled={submitting}
                             >
                                 <RefreshCw size={20} />
@@ -497,6 +603,7 @@
                             >
                                 Zapisy
                             </button>
+
                             <button
                                 onClick={() => setActiveTab('trainings')}
                                 className={`px-4 py-2 rounded-lg transition ${
@@ -507,6 +614,7 @@
                             >
                                 Treningi ({trainings.length})
                             </button>
+
                             <button
                                 onClick={() => setActiveTab('subscriptions')}
                                 className={`px-4 py-2 rounded-lg transition ${
@@ -530,7 +638,7 @@
                             ) : (
                                 Object.entries(groupedBookings).map(([key, training]) => {
                                     const acceptedCount = training.participants.filter((_, i) => i < training.limit).length;
-                                    const waitingCount = training.participants.length - acceptedCount;
+                                    const waitingCount = Math.max(training.participants.length - acceptedCount, 0);
 
                                     const trainingInPast = isTrainingInPast(training.date, training.time);
                                     const isCollapsed = collapsedTrainings[key] ?? trainingInPast;
@@ -544,41 +652,45 @@
 
                                     return (
                                         <div key={key} className="bg-white rounded-xl shadow-lg overflow-hidden">
-                                            {/* NAGŁÓWEK – accordion button */}
                                             <button
                                                 type="button"
                                                 onClick={toggleCollapsed}
-                                                className={`w-full flex items-center justify-between px-4 py-3
-                                                    ${trainingInPast
+                                                className={`w-full flex items-center justify-between px-4 py-3 ${
+                                                    trainingInPast
                                                         ? 'bg-gray-200 text-gray-700'
                                                         : 'bg-gradient-to-r from-orange-500 to-blue-500 text-white'
-                                                    }`}
+                                                }`}
                                             >
                                                 <div className="flex items-center gap-3 text-left flex-1">
-                                                    <div className={`p-2 rounded-lg
-                                                        ${trainingInPast ? 'bg-gray-300' : 'bg-white/20'}
-                                                    `}>
+                                                    <div className={`p-2 rounded-lg ${
+                                                        trainingInPast ? 'bg-gray-300' : 'bg-white/20'
+                                                    }`}>
                                                         <Calendar
                                                             size={22}
                                                             className={trainingInPast ? 'text-gray-700' : 'text-white'}
                                                         />
                                                     </div>
+
                                                     <div>
                                                         <div className="font-semibold">
                                                             {formatTrainingDateTime(training.date, training.time)}
                                                         </div>
+
                                                         <div className="flex gap-3 text-xs mt-1 flex-wrap">
                                                             <span className="flex items-center gap-1">
                                                                 <Users size={14} />
                                                                 Limit: {training.limit}
                                                             </span>
+
                                                             <span className="flex items-center gap-1">
                                                                 <Check size={14} />
                                                                 Zapisanych: {acceptedCount}/{training.limit}
                                                             </span>
+
                                                             {waitingCount > 0 && (
                                                                 <span>Lista rezerwowa: {waitingCount}</span>
                                                             )}
+
                                                             {trainingInPast && (
                                                                 <span className="uppercase tracking-wide text-[10px] bg-gray-300 text-gray-800 px-2 py-0.5 rounded-full">
                                                                     ZAKOŃCZONY
@@ -588,12 +700,7 @@
                                                     </div>
                                                 </div>
 
-                                                {/* Strzałka accordionu */}
-                                                <span
-                                                    className={`ml-4 transform transition-transform duration-200
-                                                        ${isCollapsed ? '' : 'rotate-180'}
-                                                    `}
-                                                >
+                                                <span className={`ml-4 transform transition-transform duration-200 ${isCollapsed ? '' : 'rotate-180'}`}>
                                                     <svg
                                                         width="20"
                                                         height="20"
@@ -609,7 +716,6 @@
                                                 </span>
                                             </button>
 
-                                            {/* ZAWARTOŚĆ – chowana/pokazywana */}
                                             {!isCollapsed && (
                                                 <div className="p-6">
                                                     {training.participants.length === 0 ? (
@@ -620,9 +726,10 @@
                                                         <div className="space-y-2 mb-4">
                                                             {training.participants.map((participant, index) => {
                                                                 const status = index < training.limit ? 'accepted' : 'waiting';
+
                                                                 return (
                                                                     <div
-                                                                        key={index}
+                                                                        key={participant.id || `${participant.name}-${participant.timestamp || index}`}
                                                                         className={`flex items-center justify-between p-3 rounded-lg ${
                                                                             status === 'accepted'
                                                                                 ? 'bg-green-50 border border-green-200'
@@ -633,14 +740,17 @@
                                                                             <span className="font-semibold text-gray-600">
                                                                                 {index + 1}.
                                                                             </span>
+
                                                                             <span className="font-medium text-gray-800">
                                                                                 {participant.name}
                                                                             </span>
+
                                                                             {participant.hasSubscription && (
                                                                                 <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full font-medium">
                                                                                     ABONAMENT
                                                                                 </span>
                                                                             )}
+
                                                                             {status === 'waiting' && (
                                                                                 <span className="bg-yellow-500 text-white text-xs px-2 py-1 rounded-full font-medium">
                                                                                     LISTA REZERWOWA
@@ -648,16 +758,16 @@
                                                                             )}
                                                                         </div>
 
-                                                                        {/* (opcjonalnie) blokada wypisywania z przeszłych */}
                                                                         {trainingInPast ? (
                                                                             <span className="text-xs text-gray-400">
                                                                                 Zakończony
                                                                             </span>
                                                                         ) : (
                                                                             <button
-                                                                                onClick={() => handleDeleteBooking(key, participant.name)}
-                                                                                className="text-red-500 hover:text-red-700 transition"
-                                                                                disabled={submitting}
+                                                                                onClick={() => handleDeleteBooking(participant.id)}
+                                                                                className="text-red-500 hover:text-red-700 transition disabled:text-gray-400"
+                                                                                disabled={submitting || !participant.id}
+                                                                                title="Wypisz z treningu"
                                                                             >
                                                                                 <X size={20} />
                                                                             </button>
@@ -668,7 +778,6 @@
                                                         </div>
                                                     )}
 
-                                                    {/* Dół karty – zapisy / informacja o zamkniętych zapisach */}
                                                     {trainingInPast ? (
                                                         <div className="w-full py-3 text-center text-gray-400 text-sm border-t border-gray-100">
                                                             Zapisy na ten trening zostały zamknięte (termin w przeszłości).
@@ -677,7 +786,10 @@
                                                         <>
                                                             {showBookingForm === key ? (
                                                                 <div className="bg-blue-50 p-4 rounded-lg">
-                                                                    <h4 className="font-semibold mb-3 text-gray-800">Zapisz się na trening</h4>
+                                                                    <h4 className="font-semibold mb-3 text-gray-800">
+                                                                        Zapisz się na trening
+                                                                    </h4>
+
                                                                     <div className="space-y-3">
                                                                         <div className="relative">
                                                                             <input
@@ -690,24 +802,28 @@
                                                                                     updateNameSuggestions(value);
                                                                                 }}
                                                                                 onFocus={() => {
-                                                                                    if (nameSuggestions.length > 0) setShowSuggestions(true);
+                                                                                    if (nameSuggestions.length > 0) {
+                                                                                        setShowSuggestions(true);
+                                                                                    }
                                                                                 }}
                                                                                 onBlur={() => {
                                                                                     setTimeout(() => setShowSuggestions(false), 150);
                                                                                 }}
+                                                                                onKeyDown={(e) => {
+                                                                                    if (e.key === 'Enter') {
+                                                                                        handleAddBooking(key, training.date, training.time);
+                                                                                    }
+                                                                                }}
                                                                                 className="w-full px-3 py-2 border rounded-lg"
-                                                                                onKeyPress={(e) =>
-                                                                                    e.key === 'Enter' &&
-                                                                                    handleAddBooking(key, training.date, training.time)
-                                                                                }
                                                                                 disabled={submitting}
+                                                                                autoComplete="off"
                                                                             />
 
                                                                             {showSuggestions && nameSuggestions.length > 0 && (
                                                                                 <div className="absolute z-10 mt-1 w-full border border-gray-300 rounded-lg bg-white max-h-40 overflow-y-auto text-sm shadow">
                                                                                     {nameSuggestions.map((name, i) => (
                                                                                         <button
-                                                                                            key={i}
+                                                                                            key={`${name}-${i}`}
                                                                                             type="button"
                                                                                             className="w-full text-left px-3 py-2 hover:bg-blue-50"
                                                                                             onMouseDown={(e) => {
@@ -731,6 +847,7 @@
                                                                             >
                                                                                 {submitting ? 'Zapisywanie...' : 'Zapisz się'}
                                                                             </button>
+
                                                                             <button
                                                                                 onClick={() => {
                                                                                     setShowBookingForm(null);
@@ -775,16 +892,22 @@
                     {activeTab === 'trainings' && (
                         <div className="bg-white rounded-xl shadow-lg p-6">
                             <h2 className="text-xl font-bold mb-4">Lista Treningów</h2>
+
                             {trainings.length === 0 ? (
                                 <p className="text-gray-400 text-center py-8">Brak treningów w systemie</p>
                             ) : (
                                 <div className="space-y-2">
                                     {trainings.map((training, index) => (
-                                        <div key={index} className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg flex-wrap">
+                                        <div
+                                            key={buildTrainingKey(training)}
+                                            className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg flex-wrap"
+                                        >
                                             <span className="font-semibold text-gray-600">{index + 1}.</span>
+
                                             <span className="font-medium">
                                                 {formatTrainingDateTime(training.date, training.time)}
                                             </span>
+
                                             <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm">
                                                 Limit: {training.limit}
                                             </span>
@@ -798,14 +921,20 @@
                     {activeTab === 'subscriptions' && (
                         <div className="bg-white rounded-xl shadow-lg p-6">
                             <h2 className="text-xl font-bold mb-4">Lista Abonamentów</h2>
+
                             {subscriptions.length === 0 ? (
                                 <p className="text-gray-400 text-center py-8">Brak abonamentów w systemie</p>
                             ) : (
                                 <div className="space-y-2">
                                     {subscriptions.map((sub, index) => (
-                                        <div key={index} className="flex items-center gap-4 p-3 bg-orange-50 rounded-lg flex-wrap">
+                                        <div
+                                            key={`${sub.name}-${sub.dateFrom}-${sub.dateTo}`}
+                                            className="flex items-center gap-4 p-3 bg-orange-50 rounded-lg flex-wrap"
+                                        >
                                             <span className="font-semibold text-gray-600">{index + 1}.</span>
+
                                             <span className="font-medium flex-1">{sub.name}</span>
+
                                             <span className="text-gray-600 text-sm">
                                                 {sub.dateFrom} - {sub.dateTo}
                                             </span>
