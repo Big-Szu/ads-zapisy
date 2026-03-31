@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zapisy na Treningi Siatkówki</title>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    const API_URL = 'https://script.google.com/macros/s/AKfycby6orhhFML_1TXS1Y80qrJPO5vzaJliuffAbHBcRijmtQXXhvyJCc3jsdXjJBHDWPn3Bw/exec';
+    const API_TOKEN = 'TU_WSTAW_TEN_SAM_TOKEN_CO_W_APPS_SCRIPT';
+
+    // =========================
+    // Helpery
+    // =========================
+
+    const capitalize = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+
+    const normalizeName = (name) => String(name || '').trim().replace(/\s+/g, ' ');
+
+    const validateName = (name) => {
+        const norm = normalizeName(name);
+        if (!norm) return 'Wpisz swoje imię i nazwisko.';
+        if (norm.length < 3) return 'Imię i nazwisko jest za krótkie.';
+        if (norm.length > 60) return 'Imię i nazwisko jest za długie.';
+        return null;
+    };
+
+    const isValidDateObj = (d) => d instanceof Date && !isNaN(d.getTime());
+
+    const parseLocalDateTime = (dateStr, timeStr) => {
+        if (!dateStr || !timeStr) return null;
+
+        const dateParts = dateStr.split('-').map(Number);
+        const timeParts = timeStr.split(':').map(Number);
+
+        if (dateParts.length !== 3 || timeParts.length !== 2) return null;
+
+        const [year, month, day] = dateParts;
+        const [hour, minute] = timeParts;
+
+        const d = new Date(year, month - 1, day, hour, minute, 0, 0);
+        return isValidDateObj(d) ? d : null;
+    };
+
+    const parseDateOnly = (dateStr) => {
+        if (!dateStr) return null;
+        const parts = dateStr.split('-').map(Number);
+        if (parts.length !== 3) return null;
+
+        const [year, month, day] = parts;
+        const d = new Date(year, month - 1, day, 0, 0, 0, 0);
+        if (!isValidDateObj(d)) return null;
+
+        if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
+            return null;
+        }
+
+        return d;
+    };
+
+    const formatTrainingDateTime = (dateStr, timeStr) => {
+        const d = parseLocalDateTime(dateStr, timeStr);
+        if (!d) return `${dateStr || ''} ${timeStr || ''}`.trim();
+
+        let dayName = d.toLocaleDateString('pl-PL', { weekday: 'long' });
+        dayName = capitalize(dayName);
+
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const yyyy = String(d.getFullYear());
+
+        const hh = String(d.getHours()).padStart(2, '0');
+        const min = String(d.getMinutes()).padStart(2, '0');
+
+        return `${dayName}, ${dd}.${mm}.${yyyy} ${hh}:${min}`;
+    };
+
+    const isTrainingInPast = (dateStr, timeStr) => {
+        const trainingDate = parseLocalDateTime(dateStr, timeStr);
+        if (!trainingDate) return false;
+        return trainingDate.getTime() < Date.now();
+    };
+
+    const getWeekdayFromDate = (dateStr) => {
+        const d = parseDateOnly(dateStr);
+        if (!d) return null;
+        return d.getDay(); // 0=nd, 1=pn, 2=wt, 4=czw...
+    };
+
+    const getPriorityCutoffDate = (dateStr) => {
+        const d = parseDateOnly(dateStr);
+        if (!d) return null;
+        d.setHours(16, 0, 0, 0);
+        return d;
+    };
+
+    const bookingTerminToKey = (terminValue) => {
+        if (!terminValue) return '';
+
+        const str = String(terminValue).trim();
+
+        const localKeyPattern = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
+        if (localKeyPattern.test(str)) return str;
+
+        const d = new Date(str);
+        if (!isValidDateObj(d)) return str;
+
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const hours = String(d.getHours()).padStart(2, '0');
+        const minutes = String(d.getMinutes()).padStart(2, '0');
+
+        return `${year}-${month}-${day} ${hours}:${minutes}`;
+    };
+
+    const buildTrainingKey = (training) => `${training.date} ${training.time}`;
+
+    const hasSubscriptionForDateFactory = (subscriptions) => (name, dateStr) => {
+        if (!name || !dateStr) return false;
+
+        const trainingDate = parseDateOnly(dateStr);
+        if (!trainingDate) return false;
+
+        const normalizedName = normalizeName(name).toLowerCase();
+
+        return subscriptions.some(sub => {
+            if (!sub?.name || !sub?.dateFrom || !sub?.dateTo) return false;
+            if (normalizeName(sub.name).toLowerCase() !== normalizedName) return false;
+
+            const fromDate = parseDateOnly(sub.dateFrom);
+            const toDate = parseDateOnly(sub.dateTo);
+
+            if (!fromDate || !toDate) return false;
+
+            toDate.setHours(23, 59, 59, 999);
+
+            return trainingDate.getTime() >= fromDate.getTime() &&
+                   trainingDate.getTime() <= toDate.getTime();
+        });
+    };
+
+    const sortParticipants = (participants, training) => {
+        const priorityCutoff = getPriorityCutoffDate(training.date);
+        const weekday = getWeekdayFromDate(training.date);
+
+        return [...participants].sort((a, b) => {
+            const aTime = new Date(a.timestamp);
+            const bTime = new Date(b.timestamp);
+
+            const aInvalid = !isValidDateObj(aTime);
+            const bInvalid = !isValidDateObj(bTime);
+
+            if (aInvalid && bInvalid) return 0;
+            if (aInvalid) return 1;
+            if (bInvalid) return -1;
+
+            // Wtorek: kto pierwszy, ten lepszy
+            if (weekday === 2) {
+                return aTime.getTime() - bTime.getTime();
+            }
+
+            // Czwartek: do 16:00 abonament ma priorytet wśród zapisów sprzed cutoff
+            if (weekday === 4 && priorityCutoff) {
+                const cutoffTs = priorityCutoff.getTime();
+                const aBeforeCutoff = aTime.getTime() < cutoffTs;
+                const bBeforeCutoff = bTime.getTime() < cutoffTs;
+
+                if (aBeforeCutoff && bBeforeCutoff) {
+                    if (a.hasSubscription !== b.hasSubscription) {
+                        return a.hasSubscription ? -1 : 1;
+                    }
+                    return aTime.getTime() - bTime.getTime();
+                }
+
+                if (!aBeforeCutoff && !bBeforeCutoff) {
+                    return aTime.getTime() - bTime.getTime();
+                }
+
+                return aTime.getTime() - bTime.getTime();
+            }
+
+            return aTime.getTime() - bTime.getTime();
+        });
+    };
+
+    // =========================
+    // Ikony
+    // =========================
+
+    const Calendar = ({ size = 24, className = "" }) => (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+             strokeLinejoin="round" className={className}>
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+        </svg>
+    );
+
+    const Users = ({ size = 24 }) => (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+             strokeLinejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+        </svg>
+    );
+
+    const Check = ({ size = 24 }) => (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+             strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+    );
+
+    const X = ({ size = 24 }) => (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+             strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+    );
+
+    const RefreshCw = ({ size = 24, className = "" }) => (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+             strokeLinejoin="round" className={className}>
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+        </svg>
+    );
+
+    const AlertCircle = ({ size = 24, className = "" }) => (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+             strokeLinejoin="round" className={className}>
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+    );
+
+    const UserPlus = ({ size = 24 }) => (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+             strokeLinejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="8.5" cy="7" r="4"></circle>
+            <line x1="20" y1="8" x2="20" y2="14"></line>
+            <line x1="23" y1="11" x2="17" y2="11"></line>
+        </svg>
+    );
+
+    // =========================
+    // App
+    // =========================
+
+    const VolleyballApp = () => {
+        const [trainings, setTrainings] = useState([]);
+        const [subscriptions, setSubscriptions] = useState([]);
+        const [bookings, setBookings] = useState([]);
+
+        const [loading, setLoading] = useState(true);
+        const [error, setError] = useState(null);
+        const [submitting, setSubmitting] = useState(false);
+
+        const [activeTab, setActiveTab] = useState('bookings');
+        const [showBookingForm, setShowBookingForm] = useState(null);
+        const [bookingName, setBookingName] = useState('');
+
+        const [nameSuggestions, setNameSuggestions] = useState([]);
+        const [showSuggestions, setShowSuggestions] = useState(false);
+
+        const [collapsedTrainings, setCollapsedTrainings] = useState({});
+        const [infoMessage, setInfoMessage] = useState(null);
+
+        const hasSubscriptionForDate = useMemo(
+            () => hasSubscriptionForDateFactory(subscriptions),
+            [subscriptions]
+        );
+
+        const callApiGet = async (action, data = {}) => {
+            const params = new URLSearchParams({ action, ...data });
+            const response = await fetch(`${API_URL}?${params.toString()}`, {
+                method: 'GET',
+            });
+
+            const result = await response.json();
+            return result;
+        };
+
+        const callApiPost = async (action, data = {}) => {
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    action,
+                    token: API_TOKEN,
+                    ...data,
+                }),
+            });
+
+            const result = await response.json();
+            return result;
+        };
+
+        const loadData = async () => {
+            setLoading(true);
+            setError(null);
+
+            try {
+                const [trainingsRes, subscriptionsRes, bookingsRes] = await Promise.all([
+                    callApiGet('getTrainings'),
+                    callApiGet('getSubscriptions'),
+                    callApiGet('getBookings'),
+                ]);
+
+                if (trainingsRes.error || subscriptionsRes.error || bookingsRes.error) {
+                    throw new Error(
+                        trainingsRes.error ||
+                        subscriptionsRes.error ||
+                        bookingsRes.error ||
+                        'Błąd ładowania danych'
+                    );
+                }
+
+                const trainingsData = Array.isArray(trainingsRes.trainings) ? trainingsRes.trainings : [];
+                const subscriptionsData = Array.isArray(subscriptionsRes.subscriptions) ? subscriptionsRes.subscriptions : [];
+                const bookingsData = Array.isArray(bookingsRes.bookings) ? bookingsRes.bookings : [];
+
+                trainingsData.sort((a, b) => {
+                    const aDate = parseLocalDateTime(a.date, a.time);
+                    const bDate = parseLocalDateTime(b.date, b.time);
+
+                    if (!aDate && !bDate) return 0;
+                    if (!aDate) return 1;
+                    if (!bDate) return -1;
+
+                    return aDate.getTime() - bDate.getTime();
+                });
+
+                setTrainings(trainingsData);
+                setSubscriptions(subscriptionsData);
+                setBookings(bookingsData);
+            } catch (err) {
+                console.error(err);
+                setError('Nie udało się załadować danych. Sprawdź połączenie.');
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        useEffect(() => {
+            loadData();
+        }, []);
+
+        const groupedBookings = useMemo(() => {
+            const grouped = {};
+
+            trainings.forEach(training => {
+                const key = buildTrainingKey(training);
+                grouped[key] = {
+                    ...training,
+                    participants: [],
+                    key,
+                };
+            });
+
+            bookings.forEach(booking => {
+                const key = bookingTerminToKey(booking.termin);
+                const training = grouped[key];
+
+                if (training) {
+                    training.participants.push({
+                        ...booking,
+                        hasSubscription: hasSubscriptionForDate(booking.name, training.date),
+                    });
+                }
+            });
+
+            Object.keys(grouped).forEach(key => {
+                grouped[key].participants = sortParticipants(grouped[key].participants, grouped[key]);
+            });
+
+            return grouped;
+        }, [trainings, bookings, hasSubscriptionForDate]);
+
+        useEffect(() => {
+            setCollapsedTrainings(prev => {
+                const next = { ...prev };
+
+                Object.entries(groupedBookings).forEach(([key, training]) => {
+                    if (!(key in next)) {
+                        next[key] = isTrainingInPast(training.date, training.time);
+                    }
+                });
+
+                Object.keys(next).forEach(key => {
+                    if (!(key in groupedBookings)) {
+                        delete next[key];
+                    }
+                });
+
+                return next;
+            });
+        }, [groupedBookings]);
+
+        const updateNameSuggestions = (value) => {
+            const query = normalizeName(value).toLowerCase();
+
+            if (!query) {
+                setNameSuggestions([]);
+                setShowSuggestions(false);
+                return;
+            }
+
+            const names = Array.from(
+                new Set(
+                    subscriptions
+                        .map(sub => normalizeName(sub.name))
+                        .filter(Boolean)
+                )
+            );
+
+            const filtered = names
+                .filter(name => name.toLowerCase().includes(query))
+                .slice(0, 5);
+
+            setNameSuggestions(filtered);
+            setShowSuggestions(filtered.length > 0);
+        };
+
+        const handleAddBooking = async (terminKey, trainingDate, trainingTime) => {
+            const normalizedBookingName = normalizeName(bookingName);
+
+            const validationError = validateName(normalizedBookingName);
+            if (validationError) {
+                setInfoMessage({ type: 'error', text: validationError });
+                return;
+            }
+
+            if (isTrainingInPast(trainingDate, trainingTime)) {
+                setInfoMessage({ type: 'error', text: 'Nie można zapisać się na trening w przeszłości.' });
+                return;
+            }
+
+            const alreadyBooked = bookings.some(b =>
+                bookingTerminToKey(b.termin) === terminKey &&
+                normalizeName(b.name).toLowerCase() === normalizedBookingName.toLowerCase()
+            );
+
+            if (alreadyBooked) {
+                setInfoMessage({ type: 'error', text: 'Ta osoba jest już zapisana na ten trening.' });
+                return;
+            }
+
+            setSubmitting(true);
+
+            try {
+                const result = await callApiPost('addBooking', {
+                    termin: terminKey,
+                    name: normalizedBookingName,
+                });
+
+                if (result.error) {
+                    setInfoMessage({ type: 'error', text: result.error });
+                } else {
+                    setBookingName('');
+                    setShowBookingForm(null);
+                    setNameSuggestions([]);
+                    setShowSuggestions(false);
+                    setInfoMessage({ type: 'success', text: 'Zapisano na trening.' });
+                    await loadData();
+                }
+            } catch (err) {
+                console.error(err);
+                setInfoMessage({ type: 'error', text: 'Błąd zapisu. Spróbuj ponownie.' });
+            } finally {
+                setSubmitting(false);
+            }
+        };
+
+        const handleDeleteBooking = async (terminKey, name) => {
+            if (!confirm('Czy na pewno chcesz wypisać się z treningu?')) return;
+
+            setSubmitting(true);
+
+            try {
+                const result = await callApiPost('deleteBooking', {
+                    termin: terminKey,
+                    name: normalizeName(name),
+                });
+
+                if (result.error) {
+                    setInfoMessage({ type: 'error', text: result.error });
+                } else {
+                    setInfoMessage({ type: 'success', text: 'Wypisano z treningu.' });
+                    await loadData();
+                }
+            } catch (err) {
+                console.error(err);
+                setInfoMessage({ type: 'error', text: 'Błąd wypisywania. Spróbuj ponownie.' });
+            } finally {
+                setSubmitting(false);
+            }
+        };
+
+        if (loading) {
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-orange-50 to-blue-50 flex items-center justify-center">
+                    <div className="text-center">
+                        <RefreshCw className="animate-spin mx-auto mb-4 text-orange-500" size={48} />
+                        <p className="text-gray-600">Ładowanie danych...</p>
+                    </div>
+                </div>
+            );
+        }
+
+        return (
+            <div className="min-h-screen bg-gradient-to-br from-orange-50 to-blue-50 p-4">
+                <div className="max-w-6xl mx-auto">
+                    <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+                        <div className="flex items-center justify-between mb-4 flex-wrap gap-4">
+                            <div className="flex items-center gap-3">
+                                <div className="bg-orange-500 p-3 rounded-lg">
+                                    <Calendar size={28} className="text-white" />
+                                </div>
+                                <div>
+                                    <h1 className="text-2xl font-bold text-gray-800">Zapisy na Treningi</h1>
+                                    <p className="text-gray-600">System zapisów na siatkówkę</p>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={async () => {
+                                    await loadData();
+                                    setInfoMessage({ type: 'success', text: 'Dane zostały odświeżone.' });
+                                }}
+                                className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition flex items-center gap-2 disabled:bg-gray-400"
+                                disabled={submitting}
+                            >
+                                <RefreshCw size={20} />
+                                Odśwież
+                            </button>
+                        </div>
+
+                        {error && (
+                            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 flex items-center gap-3">
+                                <AlertCircle className="text-red-500" size={24} />
+                                <p className="text-red-700">{error}</p>
+                            </div>
+                        )}
+
+                        {infoMessage && (
+                            <div
+                                className={`mb-4 rounded-lg px-4 py-2 text-sm flex justify-between items-center ${
+                                    infoMessage.type === 'error'
+                                        ? 'bg-red-50 text-red-700 border border-red-200'
+                                        : 'bg-green-50 text-green-700 border border-green-200'
+                                }`}
+                            >
+                                <span>{infoMessage.text}</span>
+                                <button
+                                    onClick={() => setInfoMessage(null)}
+                                    className="text-xs font-semibold"
+                                >
+                                    Zamknij
+                                </button>
+                            </div>
+                        )}
+
+                        <div className="flex gap-2 mb-2 flex-wrap">
+                            <button
+                                onClick={() => setActiveTab('bookings')}
+                                className={`px-4 py-2 rounded-lg transition ${
+                                    activeTab === 'bookings'
+                                        ? 'bg-orange-500 text-white'
+                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                }`}
+                            >
+                                Zapisy
+                            </button>
+
+                            <button
+                                onClick={() => setActiveTab('trainings')}
+                                className={`px-4 py-2 rounded-lg transition ${
+                                    activeTab === 'trainings'
+                                        ? 'bg-orange-500 text-white'
+                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                }`}
+                            >
+                                Treningi ({trainings.length})
+                            </button>
+
+                            <button
+                                onClick={() => setActiveTab('subscriptions')}
+                                className={`px-4 py-2 rounded-lg transition ${
+                                    activeTab === 'subscriptions'
+                                        ? 'bg-orange-500 text-white'
+                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                }`}
+                            >
+                                Abonamenty ({subscriptions.length})
+                            </button>
+                        </div>
+                    </div>
+
+                    {activeTab === 'bookings' && (
+                        <div className="grid gap-6">
+                            {Object.keys(groupedBookings).length === 0 ? (
+                                <div className="bg-white rounded-xl shadow-lg p-12 text-center">
+                                    <Calendar size={48} className="mx-auto mb-4 text-gray-400" />
+                                    <p className="text-gray-500 text-lg">Brak zaplanowanych treningów</p>
+                                </div>
+                            ) : (
+                                Object.entries(groupedBookings).map(([key, training]) => {
+                                    const acceptedCount = training.participants.filter((_, i) => i < training.limit).length;
+                                    const waitingCount = Math.max(training.participants.length - acceptedCount, 0);
+
+                                    const trainingInPast = isTrainingInPast(training.date, training.time);
+                                    const isCollapsed = collapsedTrainings[key] ?? trainingInPast;
+
+                                    const toggleCollapsed = () => {
+                                        setCollapsedTrainings(prev => ({
+                                            ...prev,
+                                            [key]: !isCollapsed,
+                                        }));
+                                    };
+
+                                    return (
+                                        <div key={key} className="bg-white rounded-xl shadow-lg overflow-hidden">
+                                            <button
+                                                type="button"
+                                                onClick={toggleCollapsed}
+                                                className={`w-full flex items-center justify-between px-4 py-3 ${
+                                                    trainingInPast
+                                                        ? 'bg-gray-200 text-gray-700'
+                                                        : 'bg-gradient-to-r from-orange-500 to-blue-500 text-white'
+                                                }`}
+                                            >
+                                                <div className="flex items-center gap-3 text-left flex-1">
+                                                    <div className={`p-2 rounded-lg ${
+                                                        trainingInPast ? 'bg-gray-300' : 'bg-white/20'
+                                                    }`}>
+                                                        <Calendar
+                                                            size={22}
+                                                            className={trainingInPast ? 'text-gray-700' : 'text-white'}
+                                                        />
+                                                    </div>
+
+                                                    <div>
+                                                        <div className="font-semibold">
+                                                            {formatTrainingDateTime(training.date, training.time)}
+                                                        </div>
+
+                                                        <div className="flex gap-3 text-xs mt-1 flex-wrap">
+                                                            <span className="flex items-center gap-1">
+                                                                <Users size={14} />
+                                                                Limit: {training.limit}
+                                                            </span>
+
+                                                            <span className="flex items-center gap-1">
+                                                                <Check size={14} />
+                                                                Zapisanych: {acceptedCount}/{training.limit}
+                                                            </span>
+
+                                                            {waitingCount > 0 && (
+                                                                <span>Lista rezerwowa: {waitingCount}</span>
+                                                            )}
+
+                                                            {trainingInPast && (
+                                                                <span className="uppercase tracking-wide text-[10px] bg-gray-300 text-gray-800 px-2 py-0.5 rounded-full">
+                                                                    ZAKOŃCZONY
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <span className={`ml-4 transform transition-transform duration-200 ${isCollapsed ? '' : 'rotate-180'}`}>
+                                                    <svg
+                                                        width="20"
+                                                        height="20"
+                                                        viewBox="0 0 24 24"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        strokeWidth="2"
+                                                        strokeLinecap="round"
+                                                        strokeLinejoin="round"
+                                                    >
+                                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                                    </svg>
+                                                </span>
+                                            </button>
+
+                                            {!isCollapsed && (
+                                                <div className="p-6">
+                                                    {training.participants.length === 0 ? (
+                                                        <p className="text-gray-400 text-center py-4">
+                                                            Brak zapisanych uczestników
+                                                        </p>
+                                                    ) : (
+                                                        <div className="space-y-2 mb-4">
+                                                            {training.participants.map((participant, index) => {
+                                                                const status = index < training.limit ? 'accepted' : 'waiting';
+
+                                                                return (
+                                                                    <div
+                                                                        key={`${participant.name}-${participant.timestamp || index}`}
+                                                                        className={`flex items-center justify-between p-3 rounded-lg ${
+                                                                            status === 'accepted'
+                                                                                ? 'bg-green-50 border border-green-200'
+                                                                                : 'bg-yellow-50 border border-yellow-200'
+                                                                        }`}
+                                                                    >
+                                                                        <div className="flex items-center gap-3 flex-wrap">
+                                                                            <span className="font-semibold text-gray-600">
+                                                                                {index + 1}.
+                                                                            </span>
+
+                                                                            <span className="font-medium text-gray-800">
+                                                                                {participant.name}
+                                                                            </span>
+
+                                                                            {participant.hasSubscription && (
+                                                                                <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full font-medium">
+                                                                                    ABONAMENT
+                                                                                </span>
+                                                                            )}
+
+                                                                            {status === 'waiting' && (
+                                                                                <span className="bg-yellow-500 text-white text-xs px-2 py-1 rounded-full font-medium">
+                                                                                    LISTA REZERWOWA
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+
+                                                                        {trainingInPast ? (
+                                                                            <span className="text-xs text-gray-400">
+                                                                                Zakończony
+                                                                            </span>
+                                                                        ) : (
+                                                                            <button
+                                                                                onClick={() => handleDeleteBooking(key, participant.name)}
+                                                                                className="text-red-500 hover:text-red-700 transition disabled:text-gray-400"
+                                                                                disabled={submitting}
+                                                                                title="Wypisz z treningu"
+                                                                            >
+                                                                                <X size={20} />
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
+
+                                                    {trainingInPast ? (
+                                                        <div className="w-full py-3 text-center text-gray-400 text-sm border-t border-gray-100">
+                                                            Zapisy na ten trening zostały zamknięte (termin w przeszłości).
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            {showBookingForm === key ? (
+                                                                <div className="bg-blue-50 p-4 rounded-lg">
+                                                                    <h4 className="font-semibold mb-3 text-gray-800">
+                                                                        Zapisz się na trening
+                                                                    </h4>
+
+                                                                    <div className="space-y-3">
+                                                                        <div className="relative">
+                                                                            <input
+                                                                                type="text"
+                                                                                placeholder="Imię i nazwisko"
+                                                                                value={bookingName}
+                                                                                onChange={(e) => {
+                                                                                    const value = e.target.value;
+                                                                                    setBookingName(value);
+                                                                                    updateNameSuggestions(value);
+                                                                                }}
+                                                                                onFocus={() => {
+                                                                                    if (nameSuggestions.length > 0) {
+                                                                                        setShowSuggestions(true);
+                                                                                    }
+                                                                                }}
+                                                                                onBlur={() => {
+                                                                                    setTimeout(() => setShowSuggestions(false), 150);
+                                                                                }}
+                                                                                onKeyDown={(e) => {
+                                                                                    if (e.key === 'Enter') {
+                                                                                        handleAddBooking(key, training.date, training.time);
+                                                                                    }
+                                                                                }}
+                                                                                className="w-full px-3 py-2 border rounded-lg"
+                                                                                disabled={submitting}
+                                                                                autoComplete="off"
+                                                                            />
+
+                                                                            {showSuggestions && nameSuggestions.length > 0 && (
+                                                                                <div className="absolute z-10 mt-1 w-full border border-gray-300 rounded-lg bg-white max-h-40 overflow-y-auto text-sm shadow">
+                                                                                    {nameSuggestions.map((name, i) => (
+                                                                                        <button
+                                                                                            key={`${name}-${i}`}
+                                                                                            type="button"
+                                                                                            className="w-full text-left px-3 py-2 hover:bg-blue-50"
+                                                                                            onMouseDown={(e) => {
+                                                                                                e.preventDefault();
+                                                                                                setBookingName(name);
+                                                                                                setShowSuggestions(false);
+                                                                                            }}
+                                                                                        >
+                                                                                            {name}
+                                                                                        </button>
+                                                                                    ))}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+
+                                                                        <div className="flex gap-2">
+                                                                            <button
+                                                                                onClick={() => handleAddBooking(key, training.date, training.time)}
+                                                                                className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition disabled:bg-gray-400"
+                                                                                disabled={submitting}
+                                                                            >
+                                                                                {submitting ? 'Zapisywanie...' : 'Zapisz się'}
+                                                                            </button>
+
+                                                                            <button
+                                                                                onClick={() => {
+                                                                                    setShowBookingForm(null);
+                                                                                    setBookingName('');
+                                                                                    setNameSuggestions([]);
+                                                                                    setShowSuggestions(false);
+                                                                                }}
+                                                                                className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 transition"
+                                                                                disabled={submitting}
+                                                                            >
+                                                                                Anuluj
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ) : (
+                                                                <button
+                                                                    onClick={() => {
+                                                                        setShowBookingForm(key);
+                                                                        setBookingName('');
+                                                                        setNameSuggestions([]);
+                                                                        setShowSuggestions(false);
+                                                                    }}
+                                                                    className="w-full bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 transition flex items-center justify-center gap-2 disabled:bg-gray-400"
+                                                                    disabled={submitting}
+                                                                >
+                                                                    <UserPlus size={20} />
+                                                                    Zapisz się na trening
+                                                                </button>
+                                                            )}
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                    )}
+
+                    {activeTab === 'trainings' && (
+                        <div className="bg-white rounded-xl shadow-lg p-6">
+                            <h2 className="text-xl font-bold mb-4">Lista Treningów</h2>
+
+                            {trainings.length === 0 ? (
+                                <p className="text-gray-400 text-center py-8">Brak treningów w systemie</p>
+                            ) : (
+                                <div className="space-y-2">
+                                    {trainings.map((training, index) => (
+                                        <div
+                                            key={buildTrainingKey(training)}
+                                            className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg flex-wrap"
+                                        >
+                                            <span className="font-semibold text-gray-600">{index + 1}.</span>
+
+                                            <span className="font-medium">
+                                                {formatTrainingDateTime(training.date, training.time)}
+                                            </span>
+
+                                            <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm">
+                                                Limit: {training.limit}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {activeTab === 'subscriptions' && (
+                        <div className="bg-white rounded-xl shadow-lg p-6">
+                            <h2 className="text-xl font-bold mb-4">Lista Abonamentów</h2>
+
+                            {subscriptions.length === 0 ? (
+                                <p className="text-gray-400 text-center py-8">Brak abonamentów w systemie</p>
+                            ) : (
+                                <div className="space-y-2">
+                                    {subscriptions.map((sub, index) => (
+                                        <div
+                                            key={`${sub.name}-${sub.dateFrom}-${sub.dateTo}`}
+                                            className="flex items-center gap-4 p-3 bg-orange-50 rounded-lg flex-wrap"
+                                        >
+                                            <span className="font-semibold text-gray-600">{index + 1}.</span>
+
+                                            <span className="font-medium flex-1">{sub.name}</span>
+
+                                            <span className="text-gray-600 text-sm">
+                                                {sub.dateFrom} - {sub.dateTo}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    ReactDOM.render(<VolleyballApp />, document.getElementById('root'));
+</script>
+</body>
+</html>
