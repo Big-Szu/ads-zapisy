@@ -19,6 +19,51 @@
     const API_URL = 'https://script.google.com/macros/s/AKfycbw8WXh4SQei9fEYWeJpsnsbiNe2X6AZiXdMt8QLYlnWQB1XqkeosenRbVMjq3_2OzdvWg/exec';
     const API_TOKEN = 'ad1a428187fac9e5c47fdb18b42f77780ee4e7a5cd30b29cb839f02e4842a511';
 
+    const PRIORITY_WEEKDAYS = [1, 2, 4]; // poniedziałek, wtorek, czwartek
+
+    const TRAINING_TYPES = {
+        coach: {
+            label: 'Trening z trenerem',
+            shortLabel: 'Trener',
+            classes: {
+                badge: 'bg-purple-100 text-purple-700',
+                event: 'bg-purple-500 text-white hover:bg-purple-600',
+                eventMuted: 'bg-purple-200 text-purple-700',
+                dot: 'bg-purple-500',
+            },
+        },
+        game: {
+            label: 'Gierka',
+            shortLabel: 'Gierka',
+            classes: {
+                badge: 'bg-green-100 text-green-700',
+                event: 'bg-green-500 text-white hover:bg-green-600',
+                eventMuted: 'bg-green-200 text-green-700',
+                dot: 'bg-green-500',
+            },
+        },
+        tournament: {
+            label: 'Turniej',
+            shortLabel: 'Turniej',
+            classes: {
+                badge: 'bg-red-100 text-red-700',
+                event: 'bg-red-500 text-white hover:bg-red-600',
+                eventMuted: 'bg-red-200 text-red-700',
+                dot: 'bg-red-500',
+            },
+        },
+        default: {
+            label: 'Trening',
+            shortLabel: 'Trening',
+            classes: {
+                badge: 'bg-gray-100 text-gray-700',
+                event: 'bg-gray-500 text-white hover:bg-gray-600',
+                eventMuted: 'bg-gray-200 text-gray-700',
+                dot: 'bg-gray-500',
+            },
+        },
+    };
+
     // =========================
     // Helpery
     // =========================
@@ -49,7 +94,19 @@
         const [hour, minute] = timeParts;
 
         const d = new Date(year, month - 1, day, hour, minute, 0, 0);
-        return isValidDateObj(d) ? d : null;
+        if (!isValidDateObj(d)) return null;
+
+        if (
+            d.getFullYear() !== year ||
+            d.getMonth() !== month - 1 ||
+            d.getDate() !== day ||
+            d.getHours() !== hour ||
+            d.getMinutes() !== minute
+        ) {
+            return null;
+        }
+
+        return d;
     };
 
     const parseDateOnly = (dateStr) => {
@@ -125,6 +182,13 @@
 
     const buildTrainingKey = (training) => `${training.date} ${training.time}`;
 
+    const buildTrainingDomId = (training) => {
+        const key = buildTrainingKey(training);
+        return `training-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+    };
+
+    const getTrainingTypeConfig = (type) => TRAINING_TYPES[type] || TRAINING_TYPES.default;
+
     const hasSubscriptionForDateFactory = (subscriptions) => (name, dateStr) => {
         if (!name || !dateStr) return false;
 
@@ -164,11 +228,7 @@
             if (aInvalid) return 1;
             if (bInvalid) return -1;
 
-            if (weekday === 2) {
-                return aTime.getTime() - bTime.getTime();
-            }
-
-            if (weekday === 4 && priorityCutoff) {
+            if (PRIORITY_WEEKDAYS.includes(weekday) && priorityCutoff) {
                 const cutoffTs = priorityCutoff.getTime();
                 const aBeforeCutoff = aTime.getTime() < cutoffTs;
                 const bBeforeCutoff = bTime.getTime() < cutoffTs;
@@ -189,6 +249,70 @@
 
             return aTime.getTime() - bTime.getTime();
         });
+    };
+
+    const getMonthStart = (date) => new Date(date.getFullYear(), date.getMonth(), 1);
+    const getMonthEnd = (date) => new Date(date.getFullYear(), date.getMonth() + 1, 0);
+
+    const getCalendarStart = (date) => {
+        const start = getMonthStart(date);
+        const day = start.getDay(); // 0=ndz
+        const diff = day === 0 ? -6 : 1 - day; // start od poniedziałku
+        const result = new Date(start);
+        result.setDate(start.getDate() + diff);
+        result.setHours(0, 0, 0, 0);
+        return result;
+    };
+
+    const getCalendarEnd = (date) => {
+        const end = getMonthEnd(date);
+        const day = end.getDay();
+        const diff = day === 0 ? 0 : 7 - day;
+        const result = new Date(end);
+        result.setDate(end.getDate() + diff);
+        result.setHours(23, 59, 59, 999);
+        return result;
+    };
+
+    const formatDateKey = (d) => {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+
+    const formatMonthLabel = (date) =>
+        capitalize(date.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' }));
+
+    const addDays = (date, days) => {
+        const d = new Date(date);
+        d.setDate(d.getDate() + days);
+        return d;
+    };
+
+    const groupTrainingsByDate = (trainings) => {
+        const map = {};
+
+        trainings.forEach(training => {
+            if (!training?.date) return;
+            if (!map[training.date]) map[training.date] = [];
+            map[training.date].push(training);
+        });
+
+        Object.keys(map).forEach(dateKey => {
+            map[dateKey].sort((a, b) => {
+                const aDate = parseLocalDateTime(a.date, a.time);
+                const bDate = parseLocalDateTime(b.date, b.time);
+
+                if (!aDate && !bDate) return 0;
+                if (!aDate) return 1;
+                if (!bDate) return -1;
+
+                return aDate.getTime() - bDate.getTime();
+            });
+        });
+
+        return map;
     };
 
     // =========================
@@ -266,6 +390,176 @@
     );
 
     // =========================
+    // Kalendarz
+    // =========================
+
+    const MonthCalendar = ({ trainings, onTrainingSelect }) => {
+        const [currentMonth, setCurrentMonth] = useState(() => {
+            const now = new Date();
+            return new Date(now.getFullYear(), now.getMonth(), 1);
+        });
+
+        const trainingsByDate = useMemo(() => groupTrainingsByDate(trainings), [trainings]);
+
+        const calendarDays = useMemo(() => {
+            const start = getCalendarStart(currentMonth);
+            const end = getCalendarEnd(currentMonth);
+
+            const days = [];
+            let cursor = new Date(start);
+
+            while (cursor <= end) {
+                days.push(new Date(cursor));
+                cursor = addDays(cursor, 1);
+            }
+
+            return days;
+        }, [currentMonth]);
+
+        const weeks = useMemo(() => {
+            const result = [];
+            for (let i = 0; i < calendarDays.length; i += 7) {
+                result.push(calendarDays.slice(i, i + 7));
+            }
+            return result;
+        }, [calendarDays]);
+
+        const weekDayLabels = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Nd'];
+
+        return (
+            <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                    <h2 className="text-xl font-bold text-gray-800">Kalendarz terminów</h2>
+
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setCurrentMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+                            }}
+                            className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 transition"
+                        >
+                            ←
+                        </button>
+
+                        <div className="min-w-[200px] text-center font-semibold">
+                            {formatMonthLabel(currentMonth)}
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setCurrentMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+                            }}
+                            className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 transition"
+                        >
+                            →
+                        </button>
+                    </div>
+                </div>
+
+                <div className="flex gap-2 flex-wrap mb-4 text-sm">
+                    {['coach', 'game', 'tournament'].map(type => {
+                        const cfg = getTrainingTypeConfig(type);
+                        return (
+                            <div key={type} className="flex items-center gap-2 bg-gray-50 px-3 py-1 rounded-full">
+                                <span className={`w-3 h-3 rounded-full ${cfg.classes.dot}`}></span>
+                                <span>{cfg.label}</span>
+                            </div>
+                        );
+                    })}
+                    <div className="flex items-center gap-2 bg-gray-50 px-3 py-1 rounded-full">
+                        <span className="w-3 h-3 rounded-full bg-gray-300"></span>
+                        <span>Termin przeszły</span>
+                    </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                    <div className="min-w-[900px]">
+                        <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-lg overflow-hidden">
+                            {weekDayLabels.map(label => (
+                                <div
+                                    key={label}
+                                    className="bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700 text-center"
+                                >
+                                    {label}
+                                </div>
+                            ))}
+
+                            {weeks.flat().map(day => {
+                                const dateKey = formatDateKey(day);
+                                const dayTrainings = trainingsByDate[dateKey] || [];
+                                const isCurrentMonth = day.getMonth() === currentMonth.getMonth();
+                                const isToday = formatDateKey(day) === formatDateKey(new Date());
+
+                                return (
+                                    <div
+                                        key={dateKey}
+                                        className={`bg-white min-h-[140px] p-2 ${
+                                            !isCurrentMonth ? 'opacity-40' : ''
+                                        }`}
+                                    >
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span
+                                                className={`text-sm font-semibold ${
+                                                    isToday
+                                                        ? 'bg-blue-500 text-white px-2 py-0.5 rounded-full'
+                                                        : 'text-gray-700'
+                                                }`}
+                                            >
+                                                {day.getDate()}
+                                            </span>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            {dayTrainings.slice(0, 3).map((training, index) => {
+                                                const cfg = getTrainingTypeConfig(training.type);
+                                                const isPast = isTrainingInPast(training.date, training.time);
+
+                                                if (isPast) {
+                                                    return (
+                                                        <div
+                                                            key={`${training.date}-${training.time}-${index}`}
+                                                            className="text-xs rounded px-2 py-1 bg-gray-200 text-gray-500 cursor-not-allowed"
+                                                            title={`Termin zakończony • ${formatTrainingDateTime(training.date, training.time)}`}
+                                                        >
+                                                            <div className="font-semibold">{training.time}</div>
+                                                            <div className="truncate">{cfg.shortLabel}</div>
+                                                        </div>
+                                                    );
+                                                }
+
+                                                return (
+                                                    <button
+                                                        key={`${training.date}-${training.time}-${index}`}
+                                                        type="button"
+                                                        className={`w-full text-left text-xs rounded px-2 py-1 transition ${cfg.classes.event}`}
+                                                        title={`${cfg.label} • ${formatTrainingDateTime(training.date, training.time)}`}
+                                                        onClick={() => onTrainingSelect(training)}
+                                                    >
+                                                        <div className="font-semibold">{training.time}</div>
+                                                        <div className="truncate">{cfg.shortLabel}</div>
+                                                    </button>
+                                                );
+                                            })}
+
+                                            {dayTrainings.length > 3 && (
+                                                <div className="text-xs text-gray-500 px-1">
+                                                    +{dayTrainings.length - 3} więcej
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // =========================
     // App
     // =========================
 
@@ -304,24 +598,23 @@
         };
 
         const callApiPost = async (action, data = {}) => {
-    const body = new URLSearchParams({
-        action,
-        token: API_TOKEN,
-        ...data,
-    });
+            const body = new URLSearchParams({
+                action,
+                token: API_TOKEN,
+                ...data,
+            });
 
-    const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-        },
-        body: body.toString(),
-    });
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                },
+                body: body.toString(),
+            });
 
-    const result = await response.json();
-    return result;
-};
-
+            const result = await response.json();
+            return result;
+        };
 
         const loadData = async () => {
             setLoading(true);
@@ -382,6 +675,7 @@
                     ...training,
                     participants: [],
                     key,
+                    domId: buildTrainingDomId(training),
                 };
             });
 
@@ -528,6 +822,27 @@
             }
         };
 
+        const handleCalendarTrainingSelect = (training) => {
+            const key = buildTrainingKey(training);
+            const domId = buildTrainingDomId(training);
+
+            setActiveTab('bookings');
+            setCollapsedTrainings(prev => ({
+                ...prev,
+                [key]: false,
+            }));
+
+            setTimeout(() => {
+                const el = document.getElementById(domId);
+                if (el) {
+                    el.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start',
+                    });
+                }
+            }, 100);
+        };
+
         if (loading) {
             return (
                 <div className="min-h-screen bg-gradient-to-br from-orange-50 to-blue-50 flex items-center justify-center">
@@ -628,6 +943,11 @@
                         </div>
                     </div>
 
+                    <MonthCalendar
+                        trainings={trainings}
+                        onTrainingSelect={handleCalendarTrainingSelect}
+                    />
+
                     {activeTab === 'bookings' && (
                         <div className="grid gap-6">
                             {Object.keys(groupedBookings).length === 0 ? (
@@ -642,6 +962,7 @@
 
                                     const trainingInPast = isTrainingInPast(training.date, training.time);
                                     const isCollapsed = collapsedTrainings[key] ?? trainingInPast;
+                                    const typeConfig = getTrainingTypeConfig(training.type);
 
                                     const toggleCollapsed = () => {
                                         setCollapsedTrainings(prev => ({
@@ -651,7 +972,11 @@
                                     };
 
                                     return (
-                                        <div key={key} className="bg-white rounded-xl shadow-lg overflow-hidden">
+                                        <div
+                                            key={key}
+                                            id={training.domId}
+                                            className="bg-white rounded-xl shadow-lg overflow-hidden scroll-mt-4"
+                                        >
                                             <button
                                                 type="button"
                                                 onClick={toggleCollapsed}
@@ -672,8 +997,11 @@
                                                     </div>
 
                                                     <div>
-                                                        <div className="font-semibold">
-                                                            {formatTrainingDateTime(training.date, training.time)}
+                                                        <div className="font-semibold flex items-center gap-2 flex-wrap">
+                                                            <span>{formatTrainingDateTime(training.date, training.time)}</span>
+                                                            <span className={`text-xs px-2 py-1 rounded-full font-medium ${typeConfig.classes.badge}`}>
+                                                                {typeConfig.label}
+                                                            </span>
                                                         </div>
 
                                                         <div className="flex gap-3 text-xs mt-1 flex-wrap">
@@ -897,22 +1225,30 @@
                                 <p className="text-gray-400 text-center py-8">Brak treningów w systemie</p>
                             ) : (
                                 <div className="space-y-2">
-                                    {trainings.map((training, index) => (
-                                        <div
-                                            key={buildTrainingKey(training)}
-                                            className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg flex-wrap"
-                                        >
-                                            <span className="font-semibold text-gray-600">{index + 1}.</span>
+                                    {trainings.map((training, index) => {
+                                        const typeConfig = getTrainingTypeConfig(training.type);
 
-                                            <span className="font-medium">
-                                                {formatTrainingDateTime(training.date, training.time)}
-                                            </span>
+                                        return (
+                                            <div
+                                                key={buildTrainingKey(training)}
+                                                className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg flex-wrap"
+                                            >
+                                                <span className="font-semibold text-gray-600">{index + 1}.</span>
 
-                                            <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm">
-                                                Limit: {training.limit}
-                                            </span>
-                                        </div>
-                                    ))}
+                                                <span className="font-medium">
+                                                    {formatTrainingDateTime(training.date, training.time)}
+                                                </span>
+
+                                                <span className={`px-3 py-1 rounded-full text-sm ${typeConfig.classes.badge}`}>
+                                                    {typeConfig.label}
+                                                </span>
+
+                                                <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm">
+                                                    Limit: {training.limit}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
